@@ -71,6 +71,7 @@
         const ChevronDown = ({className}) => <i className={`fa-solid fa-chevron-down ${className || ''}`}></i>;
         const Cloud = ({className}) => <i className={`fa-solid fa-cloud ${className || ''}`}></i>;
         const Shield = ({className}) => <i className={`fa-solid fa-shield-halved ${className || ''}`}></i>;
+        const Store = ({className}) => <i className={`fa-solid fa-store ${className || ''}`}></i>;
 
         // ============================================================================
         // 🔥 URL DE VOTRE BASE DE DONNÉES FIREBASE (AMICALE SP RIEUMES) 🔥
@@ -201,6 +202,15 @@
             { id: 'cat6', name: 'Fêtes et Cérémonies' },
             { id: 'cat7', name: 'Autre' }
           ]));
+
+          const [suppliers, setSuppliers] = useState(() => loadState('suppliers', [
+            { id: 'sup1', name: 'Super U Rieumes' },
+            { id: 'sup2', name: 'Mairie de Rieumes' },
+            { id: 'sup3', name: 'UDSP 31' },
+            { id: 'sup4', name: 'Boulangerie' },
+            { id: 'sup5', name: 'Adhérents / Pompiers' },
+            { id: 'sup6', name: 'Banque' }
+          ]));
           
           const [transactions, setTransactions] = useState(() => loadState('transactions', []));
           const [automations, setAutomations] = useState(() => loadState('automations', []));
@@ -244,6 +254,7 @@
                     setTransactions(data.transactions || []);
                     if (data.accounts) setAccounts(data.accounts);
                     if (data.categories) setCategories(data.categories);
+                    if (data.suppliers) setSuppliers(data.suppliers);
                     setAutomations(data.automations || []);
                     setClosedYears(data.closedYears || []);
                     setManuallyOpenedYears(data.manuallyOpenedYears || []);
@@ -253,6 +264,7 @@
                       transactions,
                       accounts,
                       categories,
+                      suppliers,
                       automations,
                       closedYears,
                       manuallyOpenedYears,
@@ -287,6 +299,7 @@
             localStorage.setItem('sp_rieumes_transactions', JSON.stringify(transactions));
             localStorage.setItem('sp_rieumes_accounts', JSON.stringify(accounts));
             localStorage.setItem('sp_rieumes_categories', JSON.stringify(categories));
+            localStorage.setItem('sp_rieumes_suppliers', JSON.stringify(suppliers));
             localStorage.setItem('sp_rieumes_automations', JSON.stringify(automations));
             localStorage.setItem('sp_rieumes_closedYears', JSON.stringify(closedYears));
             localStorage.setItem('sp_rieumes_manuallyOpenedYears', JSON.stringify(manuallyOpenedYears));
@@ -296,13 +309,14 @@
                 transactions,
                 accounts,
                 categories,
+                suppliers,
                 automations,
                 closedYears,
                 manuallyOpenedYears,
                 updatedAt: new Date().toISOString()
               }).catch(() => setCloudStatus('error'));
             }
-          }, [transactions, accounts, categories, automations, closedYears, manuallyOpenedYears, cloudStatus, isAuthenticated]);
+          }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, cloudStatus, isAuthenticated]);
 
           const saveFirebaseUrlConfig = (e) => {
             e.preventDefault();
@@ -319,18 +333,22 @@
           const [editModalTx, setEditModalTx] = useState(null);
           const [restoreData, setRestoreData] = useState(null);
           
+          const [balanceGroupBy, setBalanceGroupBy] = useState('category'); // 'category' | 'supplier'
           const [balanceViewMode, setBalanceViewMode] = useState('global'); // 'global' | 'detailed'
           const [balanceCategoryFilter, setBalanceCategoryFilter] = useState('all');
+          const [balanceSupplierFilter, setBalanceSupplierFilter] = useState('all');
           const [balanceTypeFilter, setBalanceTypeFilter] = useState('all');
           const [searchQuery, setSearchQuery] = useState('');
 
           const [newAccountName, setNewAccountName] = useState('');
           const [newCategoryName, setNewCategoryName] = useState('');
+          const [newSupplierName, setNewSupplierName] = useState('');
 
           const [inlineTx, setInlineTx] = useState({
             date: new Date().toISOString().split('T')[0],
             accountId: '',
             description: '',
+            supplier: '',
             category: '',
             paymentMethod: 'CB',
             checkNumber: '',
@@ -378,6 +396,7 @@
                 return (
                   tx.description.toLowerCase().includes(q) ||
                   tx.category.toLowerCase().includes(q) ||
+                  (tx.supplier && tx.supplier.toLowerCase().includes(q)) ||
                   (tx.checkNumber && tx.checkNumber.toLowerCase().includes(q)) ||
                   tx.amount.toString().includes(q)
                 );
@@ -445,6 +464,33 @@
             return summary;
           }, [transactions, currentYear, currentAccountId, categories]);
 
+          const supplierSummary = useMemo(() => {
+            const summary = {};
+            suppliers.forEach(sup => {
+              summary[sup.name] = { income: 0, expense: 0, total: 0, items: [] };
+            });
+            
+            const yearTx = transactions
+              .filter(tx => tx.date.startsWith(currentYear))
+              .filter(tx => currentAccountId === 'all' || tx.accountId === currentAccountId);
+
+            yearTx.forEach(tx => {
+              const supName = (tx.supplier && tx.supplier.trim()) ? tx.supplier.trim() : 'Non renseigné';
+              if (!summary[supName]) {
+                summary[supName] = { income: 0, expense: 0, total: 0, items: [] };
+              }
+              summary[supName].items.push(tx);
+              if (tx.type === 'income') {
+                summary[supName].income += tx.amount;
+                summary[supName].total += tx.amount;
+              } else {
+                summary[supName].expense += tx.amount;
+                summary[supName].total -= tx.amount;
+              }
+            });
+            return summary;
+          }, [transactions, currentYear, currentAccountId, suppliers]);
+
           const reportANouveau = useMemo(() => {
             const relevantTransactions = currentAccountId === 'all' 
               ? transactions 
@@ -455,12 +501,24 @@
               .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
           }, [transactions, currentAccountId, currentYear]);
 
+          // Ajout automatique d'un fournisseur s'il n'existe pas encore dans la liste
+          const ensureSupplierExists = (supplierName) => {
+            if (!supplierName || !supplierName.trim()) return;
+            const clean = supplierName.trim();
+            const exists = suppliers.some(s => s.name.toLowerCase() === clean.toLowerCase());
+            if (!exists) {
+              setSuppliers(prev => [...prev, { id: 'sup' + Date.now(), name: clean }]);
+            }
+          };
+
           const addTransaction = (tx) => {
+            if (tx.supplier) ensureSupplierExists(tx.supplier);
             setTransactions([{ ...tx, id: Date.now().toString() }, ...transactions]);
             setIsAddModalOpen(false);
           };
 
           const handleEditTransaction = (updatedTx) => {
+            if (updatedTx.supplier) ensureSupplierExists(updatedTx.supplier);
             setTransactions(transactions.map(tx => tx.id === updatedTx.id ? updatedTx : tx));
             setEditModalTx(null);
           };
@@ -477,11 +535,13 @@
 
           const handleInlineSubmit = () => {
             if (!inlineTx.amount || !inlineTx.description || !inlineTx.accountId || !inlineTx.category) return;
+            if (inlineTx.supplier) ensureSupplierExists(inlineTx.supplier);
             const newTx = {
               id: Date.now().toString(),
               type: inlineTx.type,
               amount: parseFloat(inlineTx.amount),
               description: inlineTx.description,
+              supplier: inlineTx.supplier ? inlineTx.supplier.trim() : '',
               category: inlineTx.category,
               date: inlineTx.date,
               accountId: inlineTx.accountId,
@@ -491,10 +551,11 @@
               reconciled: false
             };
             setTransactions([newTx, ...transactions]);
-            setInlineTx(prev => ({ ...prev, description: '', amount: '', checkNumber: '', category: '' }));
+            setInlineTx(prev => ({ ...prev, description: '', supplier: '', amount: '', checkNumber: '', category: '' }));
           };
 
           const addAutomation = (automation) => {
+            if (automation.supplier) ensureSupplierExists(automation.supplier);
             setAutomations([...automations, { ...automation, id: Date.now().toString() }]);
             setIsAddAutomationOpen(false);
           };
@@ -505,6 +566,7 @@
               type: auto.type,
               amount: parseFloat(auto.amount),
               description: auto.description,
+              supplier: auto.supplier || '',
               category: auto.category,
               date: new Date().toISOString().split('T')[0],
               accountId: auto.accountId,
@@ -557,6 +619,18 @@
             }
           };
 
+          const addSupplier = (e) => {
+            e.preventDefault();
+            if (newSupplierName.trim()) {
+              setSuppliers([...suppliers, { id: 'sup' + Date.now(), name: newSupplierName.trim() }]);
+              setNewSupplierName('');
+            }
+          };
+
+          const deleteSupplier = (id) => {
+            setSuppliers(suppliers.filter(s => s.id !== id));
+          };
+
           const toggleYearClosure = (year) => {
             if (closedYears.includes(year)) {
               setClosedYears(closedYears.filter(y => y !== year));
@@ -593,15 +667,25 @@
             csvContent += `\nTOTAL DES MOUVEMENTS${separator}${totalInc.toString().replace('.', ',')}${separator}${totalExp.toString().replace('.', ',')}${separator}${totalSolde.toString().replace('.', ',')}\n`;
             csvContent += `Report à nouveau${separator}${separator}${separator}${reportANouveau.toString().replace('.', ',')}\n`;
             csvContent += `SOLDE FINAL CUMULÉ${separator}${separator}${separator}${(reportANouveau + totalSolde).toString().replace('.', ',')}\n\n\n`;
+
+            csvContent += `RÉSUMÉ PAR FOURNISSEUR / TIERS\n`;
+            csvContent += `Fournisseur / Tiers${separator}Recettes${separator}Dépenses${separator}Solde\n`;
+            Object.entries(supplierSummary).forEach(([sup, data]) => {
+              if (data.income > 0 || data.expense > 0) {
+                csvContent += `"${sup}"${separator}${data.income.toString().replace('.', ',')}${separator}${data.expense.toString().replace('.', ',')}${separator}${data.total.toString().replace('.', ',')}\n`;
+              }
+            });
+            csvContent += `\n\n`;
             
             csvContent += `DÉTAIL DES OPÉRATIONS (${currentYear})\n`;
-            const headers = ['Date', 'Compte', 'Libellé', 'Catégorie', 'Mode de paiement', 'N° Chèque', 'Type', 'Montant', 'Pointé'];
+            const headers = ['Date', 'Compte', 'Libellé', 'Fournisseur / Tiers', 'Catégorie', 'Mode de paiement', 'N° Chèque', 'Type', 'Montant', 'Pointé'];
             csvContent += headers.join(separator) + '\n';
 
             const rows = filteredTransactions.map(tx => [
               new Date(tx.date).toLocaleDateString('fr-FR'),
               accounts.find(a => a.id === tx.accountId)?.name || '-',
               `"${tx.description.replace(/"/g, '""')}"`,
+              `"${(tx.supplier || '-').replace(/"/g, '""')}"`,
               `"${tx.category}"`,
               tx.paymentMethod || '-',
               tx.checkNumber ? `"${tx.checkNumber}"` : '-',
@@ -623,7 +707,7 @@
 
           // --- SAUVEGARDE ET RESTAURATION PAR FICHIER JSON ---
           const exportBackup = () => {
-            const data = { transactions, accounts, categories, automations, closedYears, manuallyOpenedYears, exportDate: new Date().toISOString() };
+            const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, exportDate: new Date().toISOString() };
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
@@ -655,6 +739,7 @@
               setTransactions(restoreData.transactions || []);
               setAccounts(restoreData.accounts || []);
               setCategories(restoreData.categories || []);
+              if (restoreData.suppliers) setSuppliers(restoreData.suppliers);
               setAutomations(restoreData.automations || []);
               setClosedYears(restoreData.closedYears || []);
               setManuallyOpenedYears(restoreData.manuallyOpenedYears || []);
@@ -670,8 +755,14 @@
             { id: 'settings', label: 'Paramètres', icon: Settings }
           ];
 
-          const filteredSummaryEntries = Object.entries(categorySummary).filter(([cat, data]) => {
-            if (balanceCategoryFilter !== 'all' && cat !== balanceCategoryFilter) return false;
+          const activeSummaryObject = balanceGroupBy === 'category' ? categorySummary : supplierSummary;
+
+          const filteredSummaryEntries = Object.entries(activeSummaryObject).filter(([key, data]) => {
+            if (balanceGroupBy === 'category') {
+              if (balanceCategoryFilter !== 'all' && key !== balanceCategoryFilter) return false;
+            } else {
+              if (balanceSupplierFilter !== 'all' && key !== balanceSupplierFilter) return false;
+            }
             if (balanceTypeFilter === 'income' && data.income === 0) return false;
             if (balanceTypeFilter === 'expense' && data.expense === 0) return false;
             return true;
@@ -978,7 +1069,7 @@
                               <div className="w-full sm:w-64">
                                 <input 
                                   type="text" 
-                                  placeholder="Rechercher une opération..." 
+                                  placeholder="Rechercher (libellé, fournisseur...)" 
                                   value={searchQuery}
                                   onChange={(e) => setSearchQuery(e.target.value)}
                                   className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-red-500"
@@ -989,36 +1080,46 @@
                               <table className="w-full text-sm text-left text-gray-300">
                                 <thead className="text-xs text-gray-400 uppercase bg-gray-950 border-b border-gray-800">
                                   <tr>
-                                    <th className="px-4 py-3">Date</th>
-                                    <th className="px-4 py-3">Compte</th>
-                                    <th className="px-4 py-3">Libellé</th>
-                                    <th className="px-4 py-3">Catégorie</th>
-                                    <th className="px-4 py-3">Mode</th>
-                                    <th className="px-4 py-3 text-right">Montant</th>
-                                    <th className="px-4 py-3 text-center">Pointé</th>
-                                    <th className="px-4 py-3 text-center print:hidden"><Paperclip className="w-4 h-4 mx-auto"/></th>
-                                    <th className="px-4 py-3 text-center print:hidden">Actions</th>
+                                    <th className="px-3 py-3">Date</th>
+                                    <th className="px-3 py-3">Compte</th>
+                                    <th className="px-3 py-3">Libellé</th>
+                                    <th className="px-3 py-3">Fournisseur / Tiers</th>
+                                    <th className="px-3 py-3">Catégorie</th>
+                                    <th className="px-3 py-3">Mode</th>
+                                    <th className="px-3 py-3 text-right">Montant</th>
+                                    <th className="px-3 py-3 text-center">Pointé</th>
+                                    <th className="px-3 py-3 text-center print:hidden"><Paperclip className="w-4 h-4 mx-auto"/></th>
+                                    <th className="px-3 py-3 text-center print:hidden">Actions</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {!isCurrentYearClosed && (
                                     <tr className="bg-gray-800/40 border-b border-gray-700 print:hidden">
-                                      <td className="px-4 py-3"><input type="date" value={inlineTx.date} onChange={e => setInlineTx({...inlineTx, date: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none" /></td>
-                                      <td className="px-4 py-3">{currentAccountId === 'all' ? (
-                                        <select value={inlineTx.accountId} onChange={e => setInlineTx({...inlineTx, accountId: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[110px]">{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select>
-                                      ) : <div className="bg-gray-800/50 border border-gray-700 rounded p-1.5 text-xs text-gray-400 w-full min-w-[110px]">{accounts.find(a => a.id === currentAccountId)?.name}</div>}</td>
-                                      <td className="px-4 py-3"><input type="text" placeholder="Nouveau libellé..." value={inlineTx.description} onChange={e => setInlineTx({...inlineTx, description: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" /></td>
-                                      <td className="px-4 py-3">
+                                      <td className="px-3 py-3"><input type="date" value={inlineTx.date} onChange={e => setInlineTx({...inlineTx, date: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none" /></td>
+                                      <td className="px-3 py-3">{currentAccountId === 'all' ? (
+                                        <select value={inlineTx.accountId} onChange={e => setInlineTx({...inlineTx, accountId: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[105px]">{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select>
+                                      ) : <div className="bg-gray-800/50 border border-gray-700 rounded p-1.5 text-xs text-gray-400 w-full min-w-[105px]">{accounts.find(a => a.id === currentAccountId)?.name}</div>}</td>
+                                      <td className="px-3 py-3"><input type="text" placeholder="Nouveau libellé..." value={inlineTx.description} onChange={e => setInlineTx({...inlineTx, description: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" /></td>
+                                      <td className="px-3 py-3">
+                                        <AutocompleteInput 
+                                          value={inlineTx.supplier} 
+                                          onChange={val => setInlineTx({...inlineTx, supplier: val})} 
+                                          options={suppliers.map(s => s.name)} 
+                                          placeholder="Fournisseur..." 
+                                          className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[125px]" 
+                                        />
+                                      </td>
+                                      <td className="px-3 py-3">
                                         <AutocompleteInput 
                                           value={inlineTx.category} 
                                           onChange={val => setInlineTx({...inlineTx, category: val})} 
                                           options={categories.map(c => c.name)} 
-                                          placeholder="Rechercher..." 
-                                          className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" 
+                                          placeholder="Catégorie..." 
+                                          className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[125px]" 
                                         />
                                       </td>
-                                      <td className="px-4 py-3">
-                                        <div className="flex flex-col space-y-1 min-w-[110px]">
+                                      <td className="px-3 py-3">
+                                        <div className="flex flex-col space-y-1 min-w-[105px]">
                                           <select value={inlineTx.paymentMethod} onChange={e => setInlineTx({...inlineTx, paymentMethod: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none">
                                             <option value="CB">CB</option>
                                             <option value="Chèque">Chèque</option>
@@ -1031,8 +1132,8 @@
                                           )}
                                         </div>
                                       </td>
-                                      <td className="px-4 py-3 text-right min-w-[170px]">
-                                        <div className="flex items-center justify-end space-x-2">
+                                      <td className="px-3 py-3 text-right min-w-[165px]">
+                                        <div className="flex items-center justify-end space-x-1.5">
                                           <select value={inlineTx.type} onChange={e => setInlineTx({...inlineTx, type: e.target.value})} className={`bg-gray-900 border border-gray-700 rounded p-1.5 text-xs outline-none font-bold ${inlineTx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
                                             <option value="expense">Dépense</option>
                                             <option value="income">Recette</option>
@@ -1040,9 +1141,9 @@
                                           <input type="number" step="0.01" placeholder="0.00" value={inlineTx.amount} onChange={e => setInlineTx({...inlineTx, amount: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-20 outline-none text-right font-bold" />
                                         </div>
                                       </td>
-                                      <td className="px-4 py-3 text-center">-</td>
-                                      <td className="px-4 py-3 text-center">-</td>
-                                      <td className="px-4 py-3 text-center">
+                                      <td className="px-3 py-3 text-center">-</td>
+                                      <td className="px-3 py-3 text-center">-</td>
+                                      <td className="px-3 py-3 text-center">
                                         <button onClick={handleInlineSubmit} disabled={!inlineTx.amount || !inlineTx.description || !inlineTx.category} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white p-2 rounded-lg" title="Ajouter l'opération">
                                           <Plus className="w-4 h-4 mx-auto"/>
                                         </button>
@@ -1051,30 +1152,38 @@
                                   )}
                                   {filteredTransactions.map((tx) => (
                                     <tr key={tx.id} className="bg-gray-900 border-b border-gray-800 hover:bg-gray-800/50">
-                                      <td className="px-4 py-3 whitespace-nowrap">{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
-                                      <td className="px-4 py-3 whitespace-nowrap">{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
-                                      <td className="px-4 py-3 font-medium text-gray-200">{tx.description}</td>
-                                      <td className="px-4 py-3 whitespace-nowrap"><span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-full border border-gray-700">{tx.category}</span></td>
-                                      <td className="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">
+                                      <td className="px-3 py-3 whitespace-nowrap">{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
+                                      <td className="px-3 py-3 whitespace-nowrap">{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
+                                      <td className="px-3 py-3 font-medium text-gray-200">{tx.description}</td>
+                                      <td className="px-3 py-3 whitespace-nowrap">
+                                        {tx.supplier ? (
+                                          <span className="text-gray-300 text-xs font-medium flex items-center space-x-1.5">
+                                            <Store className="w-3 h-3 text-gray-500" />
+                                            <span>{tx.supplier}</span>
+                                          </span>
+                                        ) : <span className="text-gray-600 text-xs">-</span>}
+                                      </td>
+                                      <td className="px-3 py-3 whitespace-nowrap"><span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-full border border-gray-700">{tx.category}</span></td>
+                                      <td className="px-3 py-3 text-sm text-gray-300 whitespace-nowrap">
                                         <span className="block font-medium">{tx.paymentMethod || '-'}</span>
                                         {tx.paymentMethod === 'Chèque' && tx.checkNumber && (
                                           <span className="block text-xs text-gray-500">N° {tx.checkNumber}</span>
                                         )}
                                       </td>
-                                      <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</td>
-                                      <td className="px-4 py-3 text-center">
+                                      <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</td>
+                                      <td className="px-3 py-3 text-center">
                                         {isCurrentYearClosed ? (
                                           <div className="flex justify-center">{tx.reconciled ? <CheckCircle className="w-6 h-6 text-gray-500" /> : <Circle className="w-6 h-6 text-gray-600" />}</div>
                                         ) : (
                                           <button onClick={() => toggleReconciled(tx.id, tx.reconciled)} className={`print:hidden ${tx.reconciled ? 'text-emerald-500' : 'text-gray-600'}`}>{tx.reconciled ? <CheckCircle className="w-6 h-6 mx-auto" /> : <Circle className="w-6 h-6 mx-auto" />}</button>
                                         )}
                                       </td>
-                                      <td className="px-4 py-3 text-center print:hidden">
+                                      <td className="px-3 py-3 text-center print:hidden">
                                         {tx.receiptUrl ? (
                                           <a href={tx.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300" title="Voir le justificatif"><Paperclip className="w-4 h-4 mx-auto"/></a>
                                         ) : '-'}
                                       </td>
-                                      <td className="px-4 py-3 text-center print:hidden">
+                                      <td className="px-3 py-3 text-center print:hidden">
                                         {!isCurrentYearClosed && (
                                           <div className="flex items-center justify-center space-x-3">
                                             <button onClick={() => setEditModalTx(tx)} className="text-gray-400 hover:text-blue-400" title="Modifier"><Pencil className="w-4 h-4"/></button>
@@ -1096,20 +1205,51 @@
                         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-6">
                           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-gray-800 pb-6">
                             <div>
-                              <h2 className="text-xl font-bold text-white">Bilan Financier {currentYear}</h2>
+                              <h2 className="text-xl font-bold text-white">
+                                Bilan Financier {currentYear} {balanceGroupBy === 'category' ? '(Par Catégorie)' : '(Par Fournisseur / Tiers)'}
+                              </h2>
                               <p className="text-xs text-gray-400 mt-1">Compte : {currentAccountId === 'all' ? 'Tous les comptes' : accounts.find(a => a.id === currentAccountId)?.name}</p>
                             </div>
                             
                             <div className="flex flex-wrap items-center gap-3 print:hidden">
+                              {/* Choix du regroupement : Catégorie ou Fournisseur */}
+                              <div className="bg-gray-950 p-1 rounded-lg border border-gray-800 flex">
+                                <button 
+                                  onClick={() => setBalanceGroupBy('category')} 
+                                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1.5 ${balanceGroupBy === 'category' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                >
+                                  <List className="w-3.5 h-3.5" />
+                                  <span>Par Catégorie</span>
+                                </button>
+                                <button 
+                                  onClick={() => setBalanceGroupBy('supplier')} 
+                                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1.5 ${balanceGroupBy === 'supplier' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                >
+                                  <Store className="w-3.5 h-3.5" />
+                                  <span>Par Fournisseur / Tiers</span>
+                                </button>
+                              </div>
+
+                              {/* Choix Synthèse ou Détaillée */}
                               <div className="bg-gray-950 p-1 rounded-lg border border-gray-800 flex">
                                 <button onClick={() => setBalanceViewMode('global')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${balanceViewMode === 'global' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>Vue Synthèse</button>
                                 <button onClick={() => setBalanceViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${balanceViewMode === 'detailed' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>Vue Détaillée</button>
                               </div>
 
-                              <select value={balanceCategoryFilter} onChange={(e) => setBalanceCategoryFilter(e.target.value)} className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg p-2.5 outline-none">
-                                <option value="all">Toutes les catégories</option>
-                                {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
-                              </select>
+                              {balanceGroupBy === 'category' ? (
+                                <select value={balanceCategoryFilter} onChange={(e) => setBalanceCategoryFilter(e.target.value)} className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg p-2.5 outline-none">
+                                  <option value="all">Toutes les catégories</option>
+                                  {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                                </select>
+                              ) : (
+                                <select value={balanceSupplierFilter} onChange={(e) => setBalanceSupplierFilter(e.target.value)} className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg p-2.5 outline-none">
+                                  <option value="all">Tous les fournisseurs / tiers</option>
+                                  {Object.keys(supplierSummary).map(supName => (
+                                    <option key={supName} value={supName}>{supName}</option>
+                                  ))}
+                                </select>
+                              )}
+
                               <select value={balanceTypeFilter} onChange={(e) => setBalanceTypeFilter(e.target.value)} className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg p-2.5 outline-none">
                                 <option value="all">Recettes & Dépenses</option>
                                 <option value="income">Recettes uniquement</option>
@@ -1135,16 +1275,19 @@
                               <table className="w-full text-sm text-left text-gray-300">
                                 <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase text-gray-400">
                                   <tr>
-                                    <th className="px-6 py-4">Catégorie</th>
+                                    <th className="px-6 py-4">{balanceGroupBy === 'category' ? 'Catégorie' : 'Fournisseur / Tiers'}</th>
                                     {(balanceTypeFilter === 'all' || balanceTypeFilter === 'income') && <th className="px-6 py-4 text-right">Recettes</th>}
                                     {(balanceTypeFilter === 'all' || balanceTypeFilter === 'expense') && <th className="px-6 py-4 text-right">Dépenses</th>}
-                                    <th className="px-6 py-4 text-right">Solde Catégorie</th>
+                                    <th className="px-6 py-4 text-right">Solde {balanceGroupBy === 'category' ? 'Catégorie' : 'Fournisseur'}</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {filteredSummaryEntries.map(([cat, data]) => (
-                                    <tr key={cat} className="border-b border-gray-800 hover:bg-gray-800/30">
-                                      <td className="px-6 py-4 font-medium text-white">{cat}</td>
+                                  {filteredSummaryEntries.map(([label, data]) => (
+                                    <tr key={label} className="border-b border-gray-800 hover:bg-gray-800/30">
+                                      <td className="px-6 py-4 font-medium text-white">
+                                        {balanceGroupBy === 'supplier' && <Store className="w-3.5 h-3.5 text-red-400 mr-2" />}
+                                        {label}
+                                      </td>
                                       {(balanceTypeFilter === 'all' || balanceTypeFilter === 'income') && (
                                         <td className="px-6 py-4 text-right text-emerald-500">{data.income > 0 ? formatCurrency(data.income) : '-'}</td>
                                       )}
@@ -1171,10 +1314,14 @@
                             </div>
                           ) : (
                             <div className="space-y-4">
-                              {filteredSummaryEntries.map(([cat, data]) => (
-                                <div key={cat} className="bg-gray-950 border border-gray-800 rounded-xl overflow-hidden">
+                              {filteredSummaryEntries.map(([label, data]) => (
+                                <div key={label} className="bg-gray-950 border border-gray-800 rounded-xl overflow-hidden">
                                   <div className="p-4 bg-gray-900/60 border-b border-gray-800 flex justify-between items-center">
-                                    <h4 className="font-bold text-white">{cat} <span className="text-xs text-gray-500 font-normal ml-2">({data.items.length} opération{data.items.length > 1 ? 's' : ''})</span></h4>
+                                    <h4 className="font-bold text-white flex items-center">
+                                      {balanceGroupBy === 'supplier' && <Store className="w-4 h-4 text-red-400 mr-2" />}
+                                      <span>{label}</span>
+                                      <span className="text-xs text-gray-500 font-normal ml-2">({data.items.length} opération{data.items.length > 1 ? 's' : ''})</span>
+                                    </h4>
                                     <div className="flex space-x-4 text-sm">
                                       {data.income > 0 && <span className="text-emerald-500">+{formatCurrency(data.income)}</span>}
                                       {data.expense > 0 && <span className="text-red-500">-{formatCurrency(data.expense)}</span>}
@@ -1188,6 +1335,9 @@
                                           <tr key={item.id} className="border-b border-gray-900 last:border-0 hover:bg-gray-900/30">
                                             <td className="px-4 py-2.5 w-28">{new Date(item.date).toLocaleDateString('fr-FR')}</td>
                                             <td className="px-4 py-2.5 text-gray-200 font-medium">{item.description}</td>
+                                            <td className="px-4 py-2.5 text-gray-400">
+                                              {balanceGroupBy === 'category' ? (item.supplier || '-') : item.category}
+                                            </td>
                                             <td className="px-4 py-2.5 w-32">{item.paymentMethod} {item.checkNumber ? `(N°${item.checkNumber})` : ''}</td>
                                             <td className={`px-4 py-2.5 text-right font-bold ${item.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
                                               {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
@@ -1197,7 +1347,7 @@
                                       </tbody>
                                     </table>
                                   ) : (
-                                    <p className="p-4 text-xs text-gray-600 italic">Aucune opération dans cette catégorie pour {currentYear}.</p>
+                                    <p className="p-4 text-xs text-gray-600 italic">Aucune opération enregistrée pour {currentYear}.</p>
                                   )}
                                 </div>
                               ))}
@@ -1234,6 +1384,7 @@
                                 <thead className="text-xs text-gray-400 uppercase bg-gray-950 border-b border-gray-800">
                                   <tr>
                                     <th className="px-4 py-3">Libellé</th>
+                                    <th className="px-4 py-3">Fournisseur</th>
                                     <th className="px-4 py-3">Compte</th>
                                     <th className="px-4 py-3">Catégorie</th>
                                     <th className="px-4 py-3">Fréquence</th>
@@ -1245,6 +1396,7 @@
                                   {automations.map((auto) => (
                                     <tr key={auto.id} className="border-b border-gray-800 hover:bg-gray-800/40">
                                       <td className="px-4 py-3 font-medium text-white">{auto.description}</td>
+                                      <td className="px-4 py-3 text-gray-300">{auto.supplier || '-'}</td>
                                       <td className="px-4 py-3">{accounts.find(a => a.id === auto.accountId)?.name || '-'}</td>
                                       <td className="px-4 py-3"><span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-full border border-gray-700">{auto.category}</span></td>
                                       <td className="px-4 py-3">{auto.frequency === 'monthly' ? 'Mensuelle' : 'Annuelle'} ({auto.paymentMethod})</td>
@@ -1272,9 +1424,9 @@
 
                       {/* PARAMETRES */}
                       {activeTab === 'settings' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                           {/* CONNEXION CLOUD FIREBASE */}
-                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-2">
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
                               <div>
                                 <h2 className="text-lg font-bold text-white flex items-center"><Shield className="w-5 h-5 mr-2 text-emerald-400"/> Coffre-Fort Cloud Firebase (Sécurisé)</h2>
@@ -1305,7 +1457,7 @@
                           </div>
 
                           {/* SAUVEGARDE ET EXPORT */}
-                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-2">
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                             <h2 className="text-lg font-bold text-white mb-2 flex items-center"><Database className="w-5 h-5 mr-2 text-red-500"/> Sauvegardes & Exportations</h2>
                             <p className="text-sm text-gray-400 mb-6">Vos données sont enregistrées automatiquement dans le Cloud Firebase et dans votre navigateur. Pensez à télécharger régulièrement une copie de sauvegarde (.json) sur votre ordinateur.</p>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1322,9 +1474,10 @@
                             </div>
                           </div>
 
+                          {/* COMPTES */}
                           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><CreditCard className="w-5 h-5 mr-2 text-red-500"/> Comptes Bancaires & Caisses</h2>
-                            <ul className="space-y-3 mb-6">
+                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><CreditCard className="w-5 h-5 mr-2 text-red-500"/> Comptes & Caisses</h2>
+                            <ul className="space-y-3 mb-6 max-h-64 overflow-y-auto pr-1">
                               {accounts.map(acc => (
                                 <li key={acc.id} className="flex justify-between items-center bg-gray-950 p-3 rounded-lg border border-gray-800">
                                   <span className="text-gray-300 font-medium">{acc.name}</span>
@@ -1340,8 +1493,9 @@
                             </form>
                           </div>
 
+                          {/* CATÉGORIES */}
                           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><List className="w-5 h-5 mr-2 text-red-500"/> Catégories Comptables</h2>
+                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><List className="w-5 h-5 mr-2 text-red-500"/> Catégories</h2>
                             <ul className="space-y-3 mb-6 max-h-64 overflow-y-auto pr-1">
                               {categories.map(cat => (
                                 <li key={cat.id} className="flex justify-between items-center bg-gray-950 p-3 rounded-lg border border-gray-800">
@@ -1358,8 +1512,25 @@
                             </form>
                           </div>
 
+                          {/* FOURNISSEURS / TIERS */}
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><Store className="w-5 h-5 mr-2 text-red-500"/> Fournisseurs / Tiers</h2>
+                            <ul className="space-y-3 mb-6 max-h-64 overflow-y-auto pr-1">
+                              {suppliers.map(sup => (
+                                <li key={sup.id} className="flex justify-between items-center bg-gray-950 p-3 rounded-lg border border-gray-800">
+                                  <span className="text-gray-300 font-medium">{sup.name}</span>
+                                  <button onClick={() => deleteSupplier(sup.id)} className="text-gray-500 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                </li>
+                              ))}
+                            </ul>
+                            <form onSubmit={addSupplier} className="flex space-x-2">
+                              <input type="text" value={newSupplierName} onChange={e => setNewSupplierName(e.target.value)} placeholder="Nouveau fournisseur..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-2.5 text-sm text-white outline-none" />
+                              <button className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium">Ajouter</button>
+                            </form>
+                          </div>
+
                           {/* GESTION DES EXERCICES EN BAS DES PARAMETRES */}
-                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-2">
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                               <div>
                                 <h2 className="text-lg font-bold text-white flex items-center"><Archive className="w-5 h-5 mr-2 text-red-500"/> Gestion des Exercices (Années)</h2>
@@ -1408,9 +1579,9 @@
                 </main>
               </div>
 
-              {isAddModalOpen && <AddTransactionModal onClose={() => setIsAddModalOpen(false)} onSave={addTransaction} accounts={accounts} currentAccountId={currentAccountId} categories={categories} />}
-              {editModalTx && <EditTransactionModal tx={editModalTx} onClose={() => setEditModalTx(null)} onSave={handleEditTransaction} accounts={accounts} categories={categories} />}
-              {isAddAutomationOpen && <AddAutomationModal onClose={() => setIsAddAutomationOpen(false)} onSave={addAutomation} accounts={accounts} categories={categories} />}
+              {isAddModalOpen && <AddTransactionModal onClose={() => setIsAddModalOpen(false)} onSave={addTransaction} accounts={accounts} currentAccountId={currentAccountId} categories={categories} suppliers={suppliers} />}
+              {editModalTx && <EditTransactionModal tx={editModalTx} onClose={() => setEditModalTx(null)} onSave={handleEditTransaction} accounts={accounts} categories={categories} suppliers={suppliers} />}
+              {isAddAutomationOpen && <AddAutomationModal onClose={() => setIsAddAutomationOpen(false)} onSave={addAutomation} accounts={accounts} categories={categories} suppliers={suppliers} />}
               
               {/* MODALE DE CHOIX DU COMPTE POUR LE LIVRE DE COMPTES */}
               {isAccountPickerOpen && (
@@ -1540,10 +1711,11 @@
           );
         }
 
-        function AddTransactionModal({ onClose, onSave, accounts, currentAccountId, categories }) {
+        function AddTransactionModal({ onClose, onSave, accounts, currentAccountId, categories, suppliers }) {
           const [type, setType] = useState('expense');
           const [amount, setAmount] = useState('');
           const [description, setDescription] = useState('');
+          const [supplier, setSupplier] = useState('');
           const [category, setCategory] = useState('');
           const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
           const [accountId, setAccountId] = useState(currentAccountId === 'all' && accounts.length > 0 ? accounts[0].id : currentAccountId);
@@ -1558,6 +1730,7 @@
               type,
               amount: parseFloat(amount),
               description,
+              supplier: supplier ? supplier.trim() : '',
               category,
               date,
               accountId,
@@ -1600,6 +1773,10 @@
                   </div>
                   <div><label className="block text-sm text-gray-400 mb-1">Libellé</label><input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
                   <div>
+                    <label className="block text-sm text-gray-400 mb-1">Fournisseur / Tiers (Optionnel - crée automatiquement si nouveau)</label>
+                    <AutocompleteInput value={supplier} onChange={setSupplier} options={suppliers.map(s => s.name)} required={false} openUpward={true} placeholder="Rechercher ou saisir un fournisseur..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                  </div>
+                  <div>
                     <label className="block text-sm text-gray-400 mb-1">Catégorie</label>
                     <AutocompleteInput value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} openUpward={true} placeholder="Rechercher une catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
                   </div>
@@ -1611,10 +1788,11 @@
           );
         }
 
-        function EditTransactionModal({ tx, onClose, onSave, accounts, categories }) {
+        function EditTransactionModal({ tx, onClose, onSave, accounts, categories, suppliers }) {
           const [type, setType] = useState(tx.type);
           const [amount, setAmount] = useState(tx.amount);
           const [description, setDescription] = useState(tx.description);
+          const [supplier, setSupplier] = useState(tx.supplier || '');
           const [category, setCategory] = useState(tx.category);
           const [date, setDate] = useState(tx.date);
           const [accountId, setAccountId] = useState(tx.accountId);
@@ -1630,6 +1808,7 @@
               type,
               amount: parseFloat(amount),
               description,
+              supplier: supplier ? supplier.trim() : '',
               category,
               date,
               accountId,
@@ -1671,6 +1850,10 @@
                   </div>
                   <div><label className="block text-sm text-gray-400 mb-1">Libellé</label><input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
                   <div>
+                    <label className="block text-sm text-gray-400 mb-1">Fournisseur / Tiers</label>
+                    <AutocompleteInput value={supplier} onChange={setSupplier} options={suppliers.map(s => s.name)} required={false} openUpward={true} placeholder="Rechercher ou saisir un fournisseur..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                  </div>
+                  <div>
                     <label className="block text-sm text-gray-400 mb-1">Catégorie</label>
                     <AutocompleteInput value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} openUpward={true} placeholder="Rechercher une catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
                   </div>
@@ -1682,10 +1865,11 @@
           );
         }
 
-        function AddAutomationModal({ onClose, onSave, accounts, categories }) {
+        function AddAutomationModal({ onClose, onSave, accounts, categories, suppliers }) {
           const [type, setType] = useState('expense');
           const [amount, setAmount] = useState('');
           const [description, setDescription] = useState('');
+          const [supplier, setSupplier] = useState('');
           const [category, setCategory] = useState('');
           const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
           const [frequency, setFrequency] = useState('monthly');
@@ -1695,7 +1879,7 @@
           const handleSubmit = (e) => {
             e.preventDefault();
             if (!amount || !description || !category) return;
-            onSave({ type, amount: parseFloat(amount), description, category, startDate, nextDate: startDate, frequency, paymentMethod, accountId });
+            onSave({ type, amount: parseFloat(amount), description, supplier: supplier ? supplier.trim() : '', category, startDate, nextDate: startDate, frequency, paymentMethod, accountId });
           };
 
           return (
@@ -1715,6 +1899,10 @@
                   </div>
                   <div><label className="block text-sm text-gray-400 mb-1">Compte</label><select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={accountId} onChange={(e) => setAccountId(e.target.value)}>{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select></div>
                   <div><label className="block text-sm text-gray-400 mb-1">Libellé</label><input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Fournisseur / Tiers</label>
+                    <AutocompleteInput value={supplier} onChange={setSupplier} options={suppliers.map(s => s.name)} required={false} openUpward={true} placeholder="Rechercher ou saisir un fournisseur..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                  </div>
                   <div>
                     <label className="block text-sm text-gray-400 mb-1">Catégorie</label>
                     <AutocompleteInput value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} openUpward={true} placeholder="Rechercher une catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
