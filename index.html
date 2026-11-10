@@ -1,0 +1,1739 @@
+<!-- eslint-disable -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trésorerie Amicale SP Rieumes</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    
+    <!-- Firebase SDK (Compatibilité directe pour fichier HTML unique) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type="number"] { -moz-appearance: textfield; }
+        .fa-solid, .fa-regular { display: inline-flex; align-items: center; justify-content: center; }
+        @media print {
+            body { background-color: white !important; color: black !important; }
+            .print\:hidden { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans selection:bg-red-500/30">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // Icônes FontAwesome
+        const Flame = ({className}) => <i className={`fa-solid fa-fire ${className || ''}`}></i>;
+        const LayoutDashboard = ({className}) => <i className={`fa-solid fa-chart-pie ${className || ''}`}></i>;
+        const List = ({className}) => <i className={`fa-solid fa-list ${className || ''}`}></i>;
+        const Plus = ({className}) => <i className={`fa-solid fa-plus ${className || ''}`}></i>;
+        const Trash2 = ({className}) => <i className={`fa-solid fa-trash ${className || ''}`}></i>;
+        const CheckCircle = ({className}) => <i className={`fa-solid fa-check-circle ${className || ''}`}></i>;
+        const Circle = ({className}) => <i className={`fa-regular fa-circle ${className || ''}`}></i>;
+        const ArrowUpRight = ({className}) => <i className={`fa-solid fa-arrow-trend-up ${className || ''}`}></i>;
+        const ArrowDownRight = ({className}) => <i className={`fa-solid fa-arrow-trend-down ${className || ''}`}></i>;
+        const X = ({className}) => <i className={`fa-solid fa-xmark ${className || ''}`}></i>;
+        const FileText = ({className}) => <i className={`fa-solid fa-file-invoice ${className || ''}`}></i>;
+        const CreditCard = ({className}) => <i className={`fa-solid fa-credit-card ${className || ''}`}></i>;
+        const Download = ({className}) => <i className={`fa-solid fa-download ${className || ''}`}></i>;
+        const Printer = ({className}) => <i className={`fa-solid fa-print ${className || ''}`}></i>;
+        const Settings = ({className}) => <i className={`fa-solid fa-gear ${className || ''}`}></i>;
+        const Repeat = ({className}) => <i className={`fa-solid fa-rotate ${className || ''}`}></i>;
+        const Paperclip = ({className}) => <i className={`fa-solid fa-paperclip ${className || ''}`}></i>;
+        const Menu = ({className}) => <i className={`fa-solid fa-bars ${className || ''}`}></i>;
+        const Lock = ({className}) => <i className={`fa-solid fa-lock ${className || ''}`}></i>;
+        const Unlock = ({className}) => <i className={`fa-solid fa-lock-open ${className || ''}`}></i>;
+        const Archive = ({className}) => <i className={`fa-solid fa-box-archive ${className || ''}`}></i>;
+        const Pencil = ({className}) => <i className={`fa-solid fa-pen ${className || ''}`}></i>;
+        const Database = ({className}) => <i className={`fa-solid fa-database ${className || ''}`}></i>;
+        const Upload = ({className}) => <i className={`fa-solid fa-upload ${className || ''}`}></i>;
+        const Play = ({className}) => <i className={`fa-solid fa-play ${className || ''}`}></i>;
+        const Calendar = ({className}) => <i className={`fa-solid fa-calendar-days ${className || ''}`}></i>;
+        const ChevronDown = ({className}) => <i className={`fa-solid fa-chevron-down ${className || ''}`}></i>;
+        const Cloud = ({className}) => <i className={`fa-solid fa-cloud ${className || ''}`}></i>;
+        const Shield = ({className}) => <i className={`fa-solid fa-shield-halved ${className || ''}`}></i>;
+
+        // ============================================================================
+        // 🔥 URL DE VOTRE BASE DE DONNÉES FIREBASE (AMICALE SP RIEUMES) 🔥
+        // ============================================================================
+        const DEFAULT_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.europe-west1.firebasedatabase.app";
+        const FALLBACK_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.firebaseio.com";
+
+        // ============================================================================
+        // 🔒 FONCTION DE SÉCURITÉ : HACHAGE DU MOT DE PASSE (AUCUN MOT DE PASSE EN CLAIR)
+        // ============================================================================
+        const computeVaultKey = (pwd) => {
+          let h1 = 0xdeadbeef ^ pwd.length, h2 = 0x41c6ce57 ^ pwd.length;
+          for (let i = 0, ch; i < pwd.length; i++) {
+            ch = pwd.charCodeAt(i);
+            h1 = Math.imul(h1 ^ ch, 2654435761);
+            h2 = Math.imul(h2 ^ ch, 1597334677);
+          }
+          h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+          h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+          return "vault_sp_" + (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+        };
+        // Empreinte cryptographique du mot de passe (le mot de passe n'apparaît jamais dans le code)
+        const EXPECTED_VAULT_KEY = "vault_sp_51a9496e7121b924";
+
+        // --- COMPOSANT : Liste déroulante de recherche flottante (s'ouvre vers le haut ou le bas automatiquement) ---
+        function AutocompleteInput({ value, onChange, options, placeholder, className, required, openUpward = false }) {
+          const [isOpen, setIsOpen] = useState(false);
+          const [coords, setCoords] = useState({ top: 0, bottom: 0, left: 0, width: 0, shouldOpenUp: false });
+          const inputRef = useRef(null);
+
+          const filteredOptions = options.filter(opt => opt.toLowerCase().includes((value || '').toLowerCase()));
+
+          const updateCoords = () => {
+            if (inputRef.current) {
+              const rect = inputRef.current.getBoundingClientRect();
+              const spaceBelow = window.innerHeight - rect.bottom;
+              const shouldOpenUp = openUpward || spaceBelow < 230;
+              setCoords({
+                top: rect.bottom + 4,
+                bottom: window.innerHeight - rect.top + 4,
+                left: rect.left,
+                width: Math.max(rect.width, 190),
+                shouldOpenUp
+              });
+            }
+          };
+
+          useEffect(() => {
+            if (isOpen) {
+              updateCoords();
+              window.addEventListener('scroll', updateCoords, true);
+              window.addEventListener('resize', updateCoords);
+            }
+            return () => {
+              window.removeEventListener('scroll', updateCoords, true);
+              window.removeEventListener('resize', updateCoords);
+            };
+          }, [isOpen]);
+
+          return (
+            <div className="relative w-full">
+              <input 
+                ref={inputRef}
+                type="text" 
+                required={required}
+                className={className}
+                value={value} 
+                onChange={(e) => { onChange(e.target.value); setIsOpen(true); updateCoords(); }}
+                onFocus={() => { setIsOpen(true); updateCoords(); }}
+                onBlur={() => setTimeout(() => setIsOpen(false), 200)}
+                placeholder={placeholder}
+              />
+              {isOpen && filteredOptions.length > 0 && (
+                <ul 
+                  style={{ 
+                    position: 'fixed', 
+                    ...(coords.shouldOpenUp ? { bottom: `${coords.bottom}px` } : { top: `${coords.top}px` }),
+                    left: `${coords.left}px`, 
+                    width: `${coords.width}px`, 
+                    zIndex: 99999 
+                  }}
+                  className="bg-gray-800 border border-gray-600 rounded-lg shadow-2xl max-h-52 overflow-y-auto text-sm"
+                >
+                  {filteredOptions.map((opt, i) => (
+                    <li 
+                      key={i} 
+                      className="px-3 py-2 text-gray-200 hover:bg-red-600 hover:text-white cursor-pointer border-b border-gray-700/50 last:border-0 transition-colors"
+                      onMouseDown={(e) => { e.preventDefault(); onChange(opt); setIsOpen(false); }}
+                    >
+                      {opt}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        }
+
+        function App() {
+          const [isAuthenticated, setIsAuthenticated] = useState(false);
+          const [passwordInput, setPasswordInput] = useState('');
+          const [passwordError, setPasswordError] = useState(false);
+
+          const [activeTab, setActiveTab] = useState('dashboard');
+          const [currentYear, setCurrentYear] = useState(new Date().getFullYear().toString());
+          const [currentAccountId, setCurrentAccountId] = useState('all');
+          const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+          
+          // Chargement initial depuis le stockage local du navigateur
+          const loadState = (key, defaultVal) => {
+            try {
+              const saved = localStorage.getItem('sp_rieumes_' + key);
+              return saved ? JSON.parse(saved) : defaultVal;
+            } catch (e) {
+              return defaultVal;
+            }
+          };
+
+          const [closedYears, setClosedYears] = useState(() => loadState('closedYears', []));
+          const [accounts, setAccounts] = useState(() => loadState('accounts', [
+            { id: 'acc1', name: 'Compte Courant' },
+            { id: 'acc2', name: 'Livret A' },
+            { id: 'acc3', name: 'Caisse' }
+          ]));
+          
+          const [categories, setCategories] = useState(() => loadState('categories', [
+            { id: 'cat1', name: 'Cotisations' },
+            { id: 'cat2', name: 'Achats Équipement' },
+            { id: 'cat3', name: 'Ventes (Calendriers, etc.)' },
+            { id: 'cat4', name: 'Frais Bancaires' },
+            { id: 'cat5', name: 'Subventions / Dons' },
+            { id: 'cat6', name: 'Fêtes et Cérémonies' },
+            { id: 'cat7', name: 'Autre' }
+          ]));
+          
+          const [transactions, setTransactions] = useState(() => loadState('transactions', []));
+          const [automations, setAutomations] = useState(() => loadState('automations', []));
+          const [manuallyOpenedYears, setManuallyOpenedYears] = useState(() => loadState('manuallyOpenedYears', []));
+
+          // --- SYNCHRONISATION CLOUD FIREBASE SÉCURISÉE (UNQUMENT APRÈS CONNEXION) ---
+          const [firebaseDbUrl, setFirebaseDbUrl] = useState(() => localStorage.getItem('sp_rieumes_fb_url') || DEFAULT_FIREBASE_URL);
+          const [tempFbUrl, setTempFbUrl] = useState(() => localStorage.getItem('sp_rieumes_fb_url') || DEFAULT_FIREBASE_URL);
+          const [cloudStatus, setCloudStatus] = useState('connecting'); // 'local' | 'connecting' | 'connected' | 'error'
+          const dbRef = useRef(null);
+          const isUpdatingFromCloud = useRef(false);
+
+          useEffect(() => {
+            if (!isAuthenticated) return;
+
+            const cleanUrl = (firebaseDbUrl || '').trim().replace(/\/$/, '');
+            if (!cleanUrl || !cleanUrl.startsWith('https://')) {
+              setCloudStatus('local');
+              dbRef.current = null;
+              return;
+            }
+
+            let activeRef = null;
+            let onValueChange = null;
+
+            const connectToUrl = (targetUrl, isFallback = false) => {
+              try {
+                setCloudStatus('connecting');
+                const appName = isFallback ? 'fb_fallback' : 'fb_main_' + Date.now();
+                const app = firebase.initializeApp({ databaseURL: targetUrl }, appName);
+                const db = firebase.database(app);
+                // Chemin sécurisé dérivé de l'empreinte du mot de passe
+                const ref = db.ref('coffre_fort/' + EXPECTED_VAULT_KEY);
+                activeRef = ref;
+                dbRef.current = ref;
+
+                onValueChange = ref.on('value', (snapshot) => {
+                  const data = snapshot.val();
+                  setCloudStatus('connected');
+                  if (data) {
+                    isUpdatingFromCloud.current = true;
+                    setTransactions(data.transactions || []);
+                    if (data.accounts) setAccounts(data.accounts);
+                    if (data.categories) setCategories(data.categories);
+                    setAutomations(data.automations || []);
+                    setClosedYears(data.closedYears || []);
+                    setManuallyOpenedYears(data.manuallyOpenedYears || []);
+                    setTimeout(() => { isUpdatingFromCloud.current = false; }, 250);
+                  } else {
+                    // Première connexion sur le coffre-fort : on envoie nos données locales actuelles
+                    ref.set({
+                      transactions,
+                      accounts,
+                      categories,
+                      automations,
+                      closedYears,
+                      manuallyOpenedYears,
+                      updatedAt: new Date().toISOString()
+                    });
+                  }
+                }, (err) => {
+                  console.warn("Erreur Firebase sur " + targetUrl, err);
+                  if (!isFallback && targetUrl === DEFAULT_FIREBASE_URL) {
+                    connectToUrl(FALLBACK_FIREBASE_URL, true);
+                  } else {
+                    setCloudStatus('error');
+                  }
+                });
+              } catch (err) {
+                console.error("Erreur init Firebase :", err);
+                setCloudStatus('error');
+              }
+            };
+
+            connectToUrl(cleanUrl, false);
+
+            return () => {
+              if (activeRef && onValueChange) {
+                activeRef.off('value', onValueChange);
+              }
+            };
+          }, [firebaseDbUrl, isAuthenticated]);
+
+          // Sauvegarde automatique dans le navigateur ET dans le Cloud à chaque changement
+          useEffect(() => {
+            localStorage.setItem('sp_rieumes_transactions', JSON.stringify(transactions));
+            localStorage.setItem('sp_rieumes_accounts', JSON.stringify(accounts));
+            localStorage.setItem('sp_rieumes_categories', JSON.stringify(categories));
+            localStorage.setItem('sp_rieumes_automations', JSON.stringify(automations));
+            localStorage.setItem('sp_rieumes_closedYears', JSON.stringify(closedYears));
+            localStorage.setItem('sp_rieumes_manuallyOpenedYears', JSON.stringify(manuallyOpenedYears));
+
+            if (isAuthenticated && dbRef.current && cloudStatus === 'connected' && !isUpdatingFromCloud.current) {
+              dbRef.current.set({
+                transactions,
+                accounts,
+                categories,
+                automations,
+                closedYears,
+                manuallyOpenedYears,
+                updatedAt: new Date().toISOString()
+              }).catch(() => setCloudStatus('error'));
+            }
+          }, [transactions, accounts, categories, automations, closedYears, manuallyOpenedYears, cloudStatus, isAuthenticated]);
+
+          const saveFirebaseUrlConfig = (e) => {
+            e.preventDefault();
+            const cleaned = tempFbUrl.trim().replace(/\/$/, '');
+            localStorage.setItem('sp_rieumes_fb_url', cleaned);
+            setFirebaseDbUrl(cleaned);
+          };
+
+          const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+          const [isAddAutomationOpen, setIsAddAutomationOpen] = useState(false);
+          const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
+          const [isYearPickerOpen, setIsYearPickerOpen] = useState(false);
+          const [hasChosenInitialAccount, setHasChosenInitialAccount] = useState(false);
+          const [editModalTx, setEditModalTx] = useState(null);
+          const [restoreData, setRestoreData] = useState(null);
+          
+          const [balanceViewMode, setBalanceViewMode] = useState('global'); // 'global' | 'detailed'
+          const [balanceCategoryFilter, setBalanceCategoryFilter] = useState('all');
+          const [balanceTypeFilter, setBalanceTypeFilter] = useState('all');
+          const [searchQuery, setSearchQuery] = useState('');
+
+          const [newAccountName, setNewAccountName] = useState('');
+          const [newCategoryName, setNewCategoryName] = useState('');
+
+          const [inlineTx, setInlineTx] = useState({
+            date: new Date().toISOString().split('T')[0],
+            accountId: '',
+            description: '',
+            category: '',
+            paymentMethod: 'CB',
+            checkNumber: '',
+            type: 'expense',
+            amount: ''
+          });
+
+          const formatCurrency = (amount) => {
+            return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
+          };
+
+          const availableYears = useMemo(() => {
+            const years = new Set(transactions.map(tx => tx.date.split('-')[0]));
+            years.add(new Date().getFullYear().toString());
+            manuallyOpenedYears.forEach(y => years.add(y));
+            
+            const maxYear = Math.max(...Array.from(years).map(Number));
+            if (closedYears.includes(maxYear.toString())) {
+              years.add((maxYear + 1).toString());
+            }
+            return Array.from(years).sort().reverse();
+          }, [transactions, closedYears, manuallyOpenedYears]);
+
+          useEffect(() => {
+            if (!availableYears.includes(currentYear) && availableYears.length > 0) {
+              setCurrentYear(availableYears[0]);
+            }
+          }, [availableYears, currentYear]);
+
+          useEffect(() => {
+            if (currentAccountId !== 'all') {
+              setInlineTx(prev => ({ ...prev, accountId: currentAccountId }));
+            } else if (!inlineTx.accountId && accounts.length > 0) {
+              setInlineTx(prev => ({ ...prev, accountId: accounts[0].id }));
+            }
+          }, [accounts, currentAccountId, inlineTx.accountId]);
+
+          const filteredTransactions = useMemo(() => {
+            return transactions
+              .filter(tx => tx.date.startsWith(currentYear))
+              .filter(tx => currentAccountId === 'all' || tx.accountId === currentAccountId)
+              .filter(tx => {
+                if (!searchQuery.trim()) return true;
+                const q = searchQuery.toLowerCase();
+                return (
+                  tx.description.toLowerCase().includes(q) ||
+                  tx.category.toLowerCase().includes(q) ||
+                  (tx.checkNumber && tx.checkNumber.toLowerCase().includes(q)) ||
+                  tx.amount.toString().includes(q)
+                );
+              })
+              .sort((a, b) => new Date(b.date) - new Date(a.date));
+          }, [transactions, currentYear, currentAccountId, searchQuery]);
+
+          const isCurrentYearClosed = closedYears.includes(currentYear);
+
+          const balances = useMemo(() => {
+            let pointed = 0;
+            let unpointed = 0;
+            const relevantTransactions = currentAccountId === 'all' 
+              ? transactions 
+              : transactions.filter(tx => tx.accountId === currentAccountId);
+
+            relevantTransactions.forEach(tx => {
+              const modifier = tx.type === 'income' ? 1 : -1;
+              if (tx.reconciled) pointed += tx.amount * modifier;
+              else unpointed += tx.amount * modifier;
+            });
+            return { pointed, unpointed, theoretical: pointed + unpointed };
+          }, [transactions, currentAccountId]);
+
+          const accountBalances = useMemo(() => {
+            const balancesByAccount = {};
+            accounts.forEach(acc => {
+              balancesByAccount[acc.id] = { pointed: 0, unpointed: 0, theoretical: 0 };
+            });
+
+            transactions.forEach(tx => {
+              if (balancesByAccount[tx.accountId]) {
+                const modifier = tx.type === 'income' ? 1 : -1;
+                if (tx.reconciled) balancesByAccount[tx.accountId].pointed += tx.amount * modifier;
+                else balancesByAccount[tx.accountId].unpointed += tx.amount * modifier;
+                balancesByAccount[tx.accountId].theoretical += tx.amount * modifier;
+              }
+            });
+            return balancesByAccount;
+          }, [transactions, accounts]);
+
+          const categorySummary = useMemo(() => {
+            const summary = {};
+            categories.forEach(cat => {
+              summary[cat.name] = { income: 0, expense: 0, total: 0, items: [] };
+            });
+            
+            const yearTx = transactions
+              .filter(tx => tx.date.startsWith(currentYear))
+              .filter(tx => currentAccountId === 'all' || tx.accountId === currentAccountId);
+
+            yearTx.forEach(tx => {
+              if (!summary[tx.category]) {
+                summary[tx.category] = { income: 0, expense: 0, total: 0, items: [] };
+              }
+              summary[tx.category].items.push(tx);
+              if (tx.type === 'income') {
+                summary[tx.category].income += tx.amount;
+                summary[tx.category].total += tx.amount;
+              } else {
+                summary[tx.category].expense += tx.amount;
+                summary[tx.category].total -= tx.amount;
+              }
+            });
+            return summary;
+          }, [transactions, currentYear, currentAccountId, categories]);
+
+          const reportANouveau = useMemo(() => {
+            const relevantTransactions = currentAccountId === 'all' 
+              ? transactions 
+              : transactions.filter(tx => tx.accountId === currentAccountId);
+
+            return relevantTransactions
+              .filter(tx => tx.date.localeCompare(`${currentYear}-01-01`) < 0)
+              .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
+          }, [transactions, currentAccountId, currentYear]);
+
+          const addTransaction = (tx) => {
+            setTransactions([{ ...tx, id: Date.now().toString() }, ...transactions]);
+            setIsAddModalOpen(false);
+          };
+
+          const handleEditTransaction = (updatedTx) => {
+            setTransactions(transactions.map(tx => tx.id === updatedTx.id ? updatedTx : tx));
+            setEditModalTx(null);
+          };
+
+          const deleteTransaction = (id) => {
+            setTransactions(transactions.filter(tx => tx.id !== id));
+          };
+
+          const toggleReconciled = (id, currentStatus) => {
+            setTransactions(transactions.map(tx => 
+              tx.id === id ? { ...tx, reconciled: !currentStatus } : tx
+            ));
+          };
+
+          const handleInlineSubmit = () => {
+            if (!inlineTx.amount || !inlineTx.description || !inlineTx.accountId || !inlineTx.category) return;
+            const newTx = {
+              id: Date.now().toString(),
+              type: inlineTx.type,
+              amount: parseFloat(inlineTx.amount),
+              description: inlineTx.description,
+              category: inlineTx.category,
+              date: inlineTx.date,
+              accountId: inlineTx.accountId,
+              paymentMethod: inlineTx.paymentMethod,
+              checkNumber: inlineTx.paymentMethod === 'Chèque' ? inlineTx.checkNumber.trim() : null,
+              receiptUrl: null,
+              reconciled: false
+            };
+            setTransactions([newTx, ...transactions]);
+            setInlineTx(prev => ({ ...prev, description: '', amount: '', checkNumber: '', category: '' }));
+          };
+
+          const addAutomation = (automation) => {
+            setAutomations([...automations, { ...automation, id: Date.now().toString() }]);
+            setIsAddAutomationOpen(false);
+          };
+
+          const executeAutomationNow = (auto) => {
+            const newTx = {
+              id: Date.now().toString(),
+              type: auto.type,
+              amount: parseFloat(auto.amount),
+              description: auto.description,
+              category: auto.category,
+              date: new Date().toISOString().split('T')[0],
+              accountId: auto.accountId,
+              paymentMethod: auto.paymentMethod || 'Prélèvement',
+              checkNumber: null,
+              receiptUrl: null,
+              reconciled: false
+            };
+            setTransactions([newTx, ...transactions]);
+          };
+
+          const deleteAutomation = (id) => {
+            setAutomations(automations.filter(a => a.id !== id));
+          };
+
+          const openNextYear = () => {
+            const maxYear = Math.max(...availableYears.map(Number));
+            const nextYear = (maxYear + 1).toString();
+            if (!manuallyOpenedYears.includes(nextYear)) {
+              setManuallyOpenedYears([...manuallyOpenedYears, nextYear]);
+            }
+          };
+
+          const addAccount = (e) => {
+            e.preventDefault();
+            if (newAccountName.trim()) {
+              setAccounts([...accounts, { id: 'acc' + Date.now(), name: newAccountName.trim() }]);
+              setNewAccountName('');
+            }
+          };
+
+          const deleteAccount = (id) => {
+            if (accounts.length > 1) {
+              setAccounts(accounts.filter(a => a.id !== id));
+              if (currentAccountId === id) setCurrentAccountId('all');
+            }
+          };
+
+          const addCategory = (e) => {
+            e.preventDefault();
+            if (newCategoryName.trim()) {
+              setCategories([...categories, { id: 'cat' + Date.now(), name: newCategoryName.trim() }]);
+              setNewCategoryName('');
+            }
+          };
+
+          const deleteCategory = (id) => {
+            if (categories.length > 1) {
+              setCategories(categories.filter(c => c.id !== id));
+            }
+          };
+
+          const toggleYearClosure = (year) => {
+            if (closedYears.includes(year)) {
+              setClosedYears(closedYears.filter(y => y !== year));
+            } else {
+              setClosedYears([...closedYears, year]);
+            }
+          };
+
+          const deleteYear = (year) => {
+            if (transactions.some(tx => tx.date.startsWith(year))) return;
+            setManuallyOpenedYears(manuallyOpenedYears.filter(y => y !== year));
+            setClosedYears(closedYears.filter(y => y !== year));
+            if (currentYear === year) {
+              setCurrentYear(new Date().getFullYear().toString());
+            }
+          };
+
+          // --- EXPORT CSV POUR EXCEL / GOOGLE SHEETS ---
+          const exportCSV = () => {
+            const separator = ';';
+            let csvContent = '\uFEFF'; 
+            csvContent += `BILAN FINANCIER ${currentYear} - Amicale SP Rieumes\n\n`;
+            csvContent += `RÉSUMÉ PAR CATÉGORIE\n`;
+            csvContent += `Catégorie${separator}Recettes${separator}Dépenses${separator}Solde\n`;
+            
+            Object.entries(categorySummary).forEach(([cat, data]) => {
+              csvContent += `"${cat}"${separator}${data.income.toString().replace('.', ',')}${separator}${data.expense.toString().replace('.', ',')}${separator}${data.total.toString().replace('.', ',')}\n`;
+            });
+            
+            const totalInc = Object.values(categorySummary).reduce((acc, curr) => acc + curr.income, 0);
+            const totalExp = Object.values(categorySummary).reduce((acc, curr) => acc + curr.expense, 0);
+            const totalSolde = Object.values(categorySummary).reduce((acc, curr) => acc + curr.total, 0);
+            
+            csvContent += `\nTOTAL DES MOUVEMENTS${separator}${totalInc.toString().replace('.', ',')}${separator}${totalExp.toString().replace('.', ',')}${separator}${totalSolde.toString().replace('.', ',')}\n`;
+            csvContent += `Report à nouveau${separator}${separator}${separator}${reportANouveau.toString().replace('.', ',')}\n`;
+            csvContent += `SOLDE FINAL CUMULÉ${separator}${separator}${separator}${(reportANouveau + totalSolde).toString().replace('.', ',')}\n\n\n`;
+            
+            csvContent += `DÉTAIL DES OPÉRATIONS (${currentYear})\n`;
+            const headers = ['Date', 'Compte', 'Libellé', 'Catégorie', 'Mode de paiement', 'N° Chèque', 'Type', 'Montant', 'Pointé'];
+            csvContent += headers.join(separator) + '\n';
+
+            const rows = filteredTransactions.map(tx => [
+              new Date(tx.date).toLocaleDateString('fr-FR'),
+              accounts.find(a => a.id === tx.accountId)?.name || '-',
+              `"${tx.description.replace(/"/g, '""')}"`,
+              `"${tx.category}"`,
+              tx.paymentMethod || '-',
+              tx.checkNumber ? `"${tx.checkNumber}"` : '-',
+              tx.type === 'income' ? 'Recette' : 'Dépense',
+              tx.amount.toString().replace('.', ','),
+              tx.reconciled ? 'Oui' : 'Non'
+            ]);
+            csvContent += rows.map(e => e.join(separator)).join("\n");
+              
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `Compta_Amicale_SP_Rieumes_${currentYear}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          };
+
+          // --- SAUVEGARDE ET RESTAURATION PAR FICHIER JSON ---
+          const exportBackup = () => {
+            const data = { transactions, accounts, categories, automations, closedYears, manuallyOpenedYears, exportDate: new Date().toISOString() };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `sauvegarde_tresorerie_rieumes_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          };
+
+          const handleFileUpload = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              try {
+                const data = JSON.parse(event.target.result);
+                if (data.transactions && data.accounts) setRestoreData(data);
+              } catch (err) {
+                console.error("Erreur de lecture du fichier", err);
+              }
+            };
+            reader.readAsText(file);
+            e.target.value = '';
+          };
+
+          const confirmRestore = () => {
+            if (restoreData) {
+              setTransactions(restoreData.transactions || []);
+              setAccounts(restoreData.accounts || []);
+              setCategories(restoreData.categories || []);
+              setAutomations(restoreData.automations || []);
+              setClosedYears(restoreData.closedYears || []);
+              setManuallyOpenedYears(restoreData.manuallyOpenedYears || []);
+              setRestoreData(null);
+            }
+          };
+
+          const navItems = [
+            { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard },
+            { id: 'transactions', label: 'Livre de Comptes', icon: List },
+            { id: 'balance', label: 'Bilan Annuel', icon: FileText },
+            { id: 'automations', label: 'Automatisations', icon: Repeat },
+            { id: 'settings', label: 'Paramètres', icon: Settings }
+          ];
+
+          const filteredSummaryEntries = Object.entries(categorySummary).filter(([cat, data]) => {
+            if (balanceCategoryFilter !== 'all' && cat !== balanceCategoryFilter) return false;
+            if (balanceTypeFilter === 'income' && data.income === 0) return false;
+            if (balanceTypeFilter === 'expense' && data.expense === 0) return false;
+            return true;
+          });
+
+          const sumIncome = filteredSummaryEntries.reduce((acc, [_, data]) => acc + data.income, 0);
+          const sumExpense = filteredSummaryEntries.reduce((acc, [_, data]) => acc + data.expense, 0);
+          const sumTotal = filteredSummaryEntries.reduce((acc, [_, data]) => acc + data.total, 0);
+
+          if (!isAuthenticated) {
+            return (
+              <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-4 selection:bg-red-500/30">
+                <div className="bg-gray-900 border border-gray-800 p-8 rounded-3xl w-full max-w-md shadow-2xl flex flex-col items-center">
+                  <div className="bg-red-600 p-4 rounded-2xl shadow-lg shadow-red-600/20 mb-6">
+                    <Flame className="w-10 h-10 text-white" />
+                  </div>
+                  <h1 className="text-2xl font-bold text-white mb-2 text-center tracking-tight">Amicale SP Rieumes</h1>
+                  <p className="text-gray-400 mb-8 text-center text-sm font-medium">Accès chiffré à la trésorerie</p>
+                  <form onSubmit={(e) => { e.preventDefault(); if (computeVaultKey(passwordInput) === EXPECTED_VAULT_KEY) { setIsAuthenticated(true); setPasswordError(false); } else { setPasswordError(true); } }} className="w-full space-y-5">
+                    <div>
+                      <input type="password" placeholder="Mot de passe d'accès" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} className={`w-full bg-gray-950 border ${passwordError ? 'border-red-500' : 'border-gray-700'} rounded-xl p-4 text-white outline-none focus:border-red-500 transition-all text-center text-lg tracking-widest`} />
+                      {passwordError && <p className="text-red-500 text-xs mt-2 text-center font-medium">Mot de passe incorrect.</p>}
+                    </div>
+                    <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-colors flex items-center justify-center shadow-lg shadow-red-600/20">
+                      <Lock className="w-5 h-5 mr-2" /> Déverrouiller le coffre
+                    </button>
+                  </form>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="min-h-screen bg-gray-950 text-gray-100 font-sans selection:bg-red-500/30">
+              <div className="flex h-screen overflow-hidden">
+                <aside className="hidden md:flex w-64 flex-col bg-gray-900 border-r border-gray-800 print:hidden">
+                  <div className="p-6 flex items-center space-x-3">
+                    <div className="bg-red-600 p-2 rounded-xl shadow-lg shadow-red-600/20 flex-shrink-0">
+                      <Flame className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <h1 className="text-lg font-bold text-white tracking-tight leading-tight">Trésorerie Amicale</h1>
+                      <p className="text-xs text-red-400 font-medium mt-0.5">Sapeurs-Pompiers de Rieumes</p>
+                    </div>
+                  </div>
+                  <nav className="flex-1 px-4 py-4 space-y-2">
+                    {navItems.map((item) => (
+                      <button 
+                        key={item.id} 
+                        onClick={() => {
+                          setActiveTab(item.id);
+                          if (item.id === 'transactions' && !hasChosenInitialAccount) {
+                            setIsAccountPickerOpen(true);
+                          }
+                        }} 
+                        className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-red-600 text-white shadow-md shadow-red-600/10' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+                      >
+                        <item.icon className="w-5 h-5" />
+                        <span className="font-medium">{item.label}</span>
+                      </button>
+                    ))}
+                  </nav>
+                  
+                  <div className="p-4 space-y-3 border-t border-gray-800">
+                    <div className={`flex items-center justify-center space-x-2 p-2 rounded-xl text-xs font-medium border ${
+                      cloudStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                      cloudStatus === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                      'bg-gray-800 text-gray-400 border-gray-700'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        cloudStatus === 'connected' ? 'bg-emerald-400 animate-pulse' :
+                        cloudStatus === 'error' ? 'bg-red-500' : 'bg-yellow-400 animate-pulse'
+                      }`}></span>
+                      <span>
+                        {cloudStatus === 'connected' ? 'Synchronisé (Firebase)' :
+                         cloudStatus === 'error' ? 'Mode Local (Vérifier Règles)' :
+                         'Connexion Firebase...'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 text-center font-medium">
+                      © {new Date().getFullYear()} - Amicale SP Rieumes<br/>Laurent Basque
+                    </p>
+                  </div>
+                </aside>
+
+                <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-4 z-40 print:hidden">
+                  <div className="flex items-center space-x-2 overflow-hidden mr-2">
+                     <Flame className="w-6 h-6 text-red-500 flex-shrink-0" />
+                     <h1 className="text-base font-bold text-white truncate">Trésorerie Amicale SP Rieumes</h1>
+                  </div>
+                  <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-gray-400 flex-shrink-0">
+                    {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+                  </button>
+                </div>
+
+                {isMobileMenuOpen && (
+                  <div className="md:hidden fixed inset-0 top-16 bg-gray-900 z-30 flex flex-col p-4 print:hidden">
+                     <div className="flex-1 space-y-2 overflow-y-auto">
+                       {navItems.map((item) => (
+                        <button 
+                          key={item.id} 
+                          onClick={() => { 
+                            setActiveTab(item.id); 
+                            setIsMobileMenuOpen(false); 
+                            if (item.id === 'transactions' && !hasChosenInitialAccount) {
+                              setIsAccountPickerOpen(true);
+                            }
+                          }} 
+                          className={`w-full flex items-center space-x-3 px-4 py-4 rounded-xl transition-all ${activeTab === item.id ? 'bg-red-600 text-white' : 'text-gray-400'}`}
+                        >
+                          <item.icon className="w-5 h-5" />
+                          <span className="font-medium text-lg">{item.label}</span>
+                        </button>
+                      ))}
+                     </div>
+                     <div className="mt-auto pt-4 border-t border-gray-800">
+                        <p className="text-xs text-gray-500 text-center font-medium">
+                          © {new Date().getFullYear()} - Amicale SP Rieumes - Laurent Basque
+                        </p>
+                     </div>
+                  </div>
+                )}
+
+                <main className="flex-1 flex flex-col h-full overflow-hidden w-full pt-16 md:pt-0">
+                  <header className="bg-gray-900/50 backdrop-blur-sm border-b border-gray-800 p-4 flex flex-col sm:flex-row justify-between items-center z-10 print:hidden space-y-3 sm:space-y-0">
+                    <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                      <button 
+                        onClick={() => setIsAccountPickerOpen(true)} 
+                        className="bg-gray-800/90 hover:bg-gray-800 border border-gray-700 hover:border-red-500/50 text-white text-sm rounded-xl px-4 py-2.5 flex items-center justify-between space-x-3 transition-all shadow-sm flex-1 sm:flex-none group"
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <CreditCard className="w-4 h-4 text-red-500 group-hover:scale-110 transition-transform" />
+                          <span className="font-semibold">
+                            {currentAccountId === 'all' ? 'Tous les comptes' : accounts.find(a => a.id === currentAccountId)?.name}
+                          </span>
+                        </div>
+                        <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-white transition-colors" />
+                      </button>
+
+                      <button 
+                        onClick={() => setIsYearPickerOpen(true)} 
+                        className="bg-gray-800/90 hover:bg-gray-800 border border-gray-700 hover:border-red-500/50 text-white text-sm rounded-xl px-4 py-2.5 flex items-center justify-between space-x-3 transition-all shadow-sm group"
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <Calendar className="w-4 h-4 text-red-500 group-hover:scale-110 transition-transform" />
+                          <span className="font-semibold">Exercice {currentYear}</span>
+                          {closedYears.includes(currentYear) && <Lock className="w-3.5 h-3.5 text-yellow-500 ml-1" />}
+                        </div>
+                        <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-white transition-colors" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                      <button onClick={exportCSV} title="Exporter vers Excel / Google Sheets" className="flex items-center justify-center space-x-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors">
+                        <Download className="w-4 h-4" /><span className="hidden lg:inline">Export Sheets / Excel</span>
+                      </button>
+                      {!isCurrentYearClosed && (
+                        <button onClick={() => setIsAddModalOpen(true)} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors shadow-lg shadow-red-600/20">
+                          <Plus className="w-5 h-5" /><span>Nouvelle Opération</span>
+                        </button>
+                      )}
+                    </div>
+                  </header>
+
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+                    <div className="max-w-[1600px] w-full mx-auto">
+                      
+                      {/* DASHBOARD */}
+                      {activeTab === 'dashboard' && (
+                        <div className="space-y-6">
+                          {isCurrentYearClosed && (
+                            <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl flex items-center">
+                              <Lock className="w-6 h-6 mr-3 flex-shrink-0" />
+                              <div>
+                                <h4 className="font-bold">Exercice Clôturé</h4>
+                                <p className="text-sm">L'année {currentYear} est verrouillée en écriture.</p>
+                              </div>
+                            </div>
+                          )}
+                          <div>
+                            <h2 className="text-2xl font-bold text-white mb-6">Aperçu Financier Global</h2>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                              <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-4 opacity-10"><CheckCircle className="w-24 h-24" /></div>
+                                <p className="text-sm font-medium text-gray-400 mb-1">Solde Bancaire (Pointé)</p>
+                                <h3 className={`text-4xl font-bold ${balances.pointed >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{formatCurrency(balances.pointed)}</h3>
+                              </div>
+                              <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-4 opacity-10"><Circle className="w-24 h-24" /></div>
+                                <p className="text-sm font-medium text-gray-400 mb-1">Opérations non pointées</p>
+                                <h3 className={`text-4xl font-bold ${balances.unpointed >= 0 ? 'text-blue-400' : 'text-yellow-500'}`}>{balances.unpointed > 0 ? '+' : ''}{formatCurrency(balances.unpointed)}</h3>
+                              </div>
+                              <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-4 opacity-10"><LayoutDashboard className="w-24 h-24" /></div>
+                                <p className="text-sm font-medium text-gray-400 mb-1">Solde Théorique Final</p>
+                                <h3 className={`text-4xl font-bold ${balances.theoretical >= 0 ? 'text-white' : 'text-red-400'}`}>{formatCurrency(balances.theoretical)}</h3>
+                              </div>
+                            </div>
+                          </div>
+
+                          {currentAccountId === 'all' && accounts.length > 0 && (
+                            <div className="mt-8">
+                              <h3 className="text-lg font-bold text-white mb-4">Détail par compte</h3>
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {accounts.map(acc => {
+                                  const bal = accountBalances[acc.id] || { pointed: 0, unpointed: 0, theoretical: 0 };
+                                  return (
+                                    <div key={acc.id} className="bg-gray-900 p-5 rounded-2xl border border-gray-800 flex flex-col justify-between hover:border-gray-700 transition-all cursor-pointer" onClick={() => { setCurrentAccountId(acc.id); setHasChosenInitialAccount(true); setActiveTab('transactions'); }}>
+                                      <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center space-x-2">
+                                          <CreditCard className="w-5 h-5 text-red-500" />
+                                          <h4 className="font-bold text-white text-lg">{acc.name}</h4>
+                                        </div>
+                                        <span className="text-xs text-gray-500">Voir le livre →</span>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-2 pt-3 border-t border-gray-800/80">
+                                        <div>
+                                          <p className="text-xs text-gray-500 mb-1">Pointé</p>
+                                          <p className={`font-bold text-sm ${bal.pointed >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{formatCurrency(bal.pointed)}</p>
+                                        </div>
+                                        <div className="text-center">
+                                          <p className="text-xs text-gray-500 mb-1">En attente</p>
+                                          <p className={`font-bold text-sm ${bal.unpointed >= 0 ? 'text-blue-400' : 'text-yellow-500'}`}>{formatCurrency(bal.unpointed)}</p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="text-xs text-gray-500 mb-1">Théorique</p>
+                                          <p className={`font-bold text-sm ${bal.theoretical >= 0 ? 'text-white' : 'text-red-400'}`}>{formatCurrency(bal.theoretical)}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* TRANSACTIONS */}
+                      {activeTab === 'transactions' && (
+                        <div className="space-y-6">
+                          {/* BANDEAU DES SOLDES DU COMPTE TRAITÉ */}
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 shadow-sm">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pb-3 border-b border-gray-800 gap-3">
+                              <div className="flex items-center space-x-3">
+                                <div className="bg-red-600/20 border border-red-500/30 p-2.5 rounded-xl text-red-500">
+                                  <CreditCard className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-400">Compte actuellement traité en écriture</p>
+                                  <h3 className="text-lg font-bold text-white">
+                                    {currentAccountId === 'all' ? 'Tous les comptes confondus' : accounts.find(a => a.id === currentAccountId)?.name}
+                                  </h3>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => setIsAccountPickerOpen(true)}
+                                className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 px-3.5 py-2 rounded-xl font-medium transition-colors flex items-center space-x-2 print:hidden"
+                              >
+                                <Repeat className="w-3.5 h-3.5 text-red-400" />
+                                <span>Changer de compte</span>
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                              <div className="bg-gray-950 border border-gray-800/80 p-4 rounded-xl flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs text-gray-400 mb-0.5">Solde Pointé (Banque)</p>
+                                  <p className={`text-2xl font-bold ${balances.pointed >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                    {formatCurrency(balances.pointed)}
+                                  </p>
+                                </div>
+                                <CheckCircle className="w-8 h-8 text-emerald-500/20" />
+                              </div>
+
+                              <div className="bg-gray-950 border border-gray-800/80 p-4 rounded-xl flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs text-gray-400 mb-0.5">Opérations non pointées</p>
+                                  <p className={`text-2xl font-bold ${balances.unpointed >= 0 ? 'text-blue-400' : 'text-yellow-500'}`}>
+                                    {balances.unpointed > 0 ? '+' : ''}{formatCurrency(balances.unpointed)}
+                                  </p>
+                                </div>
+                                <Circle className="w-8 h-8 text-yellow-500/20" />
+                              </div>
+
+                              <div className="bg-gray-950 border border-gray-800/80 p-4 rounded-xl flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs text-gray-400 mb-0.5">Solde Théorique Final</p>
+                                  <p className={`text-2xl font-bold ${balances.theoretical >= 0 ? 'text-white' : 'text-red-400'}`}>
+                                    {formatCurrency(balances.theoretical)}
+                                  </p>
+                                </div>
+                                <LayoutDashboard className="w-8 h-8 text-gray-500/20" />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-sm">
+                            <div className="p-6 border-b border-gray-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                              <div>
+                                <h2 className="text-xl font-bold text-white">Livre de Comptes ({currentYear})</h2>
+                                <p className="text-xs text-gray-400 mt-0.5">{filteredTransactions.length} opération(s) affichée(s)</p>
+                              </div>
+                              <div className="w-full sm:w-64">
+                                <input 
+                                  type="text" 
+                                  placeholder="Rechercher une opération..." 
+                                  value={searchQuery}
+                                  onChange={(e) => setSearchQuery(e.target.value)}
+                                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-red-500"
+                                />
+                              </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm text-left text-gray-300">
+                                <thead className="text-xs text-gray-400 uppercase bg-gray-950 border-b border-gray-800">
+                                  <tr>
+                                    <th className="px-4 py-3">Date</th>
+                                    <th className="px-4 py-3">Compte</th>
+                                    <th className="px-4 py-3">Libellé</th>
+                                    <th className="px-4 py-3">Catégorie</th>
+                                    <th className="px-4 py-3">Mode</th>
+                                    <th className="px-4 py-3 text-right">Montant</th>
+                                    <th className="px-4 py-3 text-center">Pointé</th>
+                                    <th className="px-4 py-3 text-center print:hidden"><Paperclip className="w-4 h-4 mx-auto"/></th>
+                                    <th className="px-4 py-3 text-center print:hidden">Actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {!isCurrentYearClosed && (
+                                    <tr className="bg-gray-800/40 border-b border-gray-700 print:hidden">
+                                      <td className="px-4 py-3"><input type="date" value={inlineTx.date} onChange={e => setInlineTx({...inlineTx, date: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none" /></td>
+                                      <td className="px-4 py-3">{currentAccountId === 'all' ? (
+                                        <select value={inlineTx.accountId} onChange={e => setInlineTx({...inlineTx, accountId: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[110px]">{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select>
+                                      ) : <div className="bg-gray-800/50 border border-gray-700 rounded p-1.5 text-xs text-gray-400 w-full min-w-[110px]">{accounts.find(a => a.id === currentAccountId)?.name}</div>}</td>
+                                      <td className="px-4 py-3"><input type="text" placeholder="Nouveau libellé..." value={inlineTx.description} onChange={e => setInlineTx({...inlineTx, description: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" /></td>
+                                      <td className="px-4 py-3">
+                                        <AutocompleteInput 
+                                          value={inlineTx.category} 
+                                          onChange={val => setInlineTx({...inlineTx, category: val})} 
+                                          options={categories.map(c => c.name)} 
+                                          placeholder="Rechercher..." 
+                                          className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" 
+                                        />
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex flex-col space-y-1 min-w-[110px]">
+                                          <select value={inlineTx.paymentMethod} onChange={e => setInlineTx({...inlineTx, paymentMethod: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none">
+                                            <option value="CB">CB</option>
+                                            <option value="Chèque">Chèque</option>
+                                            <option value="Prélèvement">Prélèvement</option>
+                                            <option value="Virement">Virement</option>
+                                            <option value="Espèces">Espèces</option>
+                                          </select>
+                                          {inlineTx.paymentMethod === 'Chèque' && (
+                                            <input type="text" placeholder="N° de chèque" value={inlineTx.checkNumber} onChange={e => setInlineTx({...inlineTx, checkNumber: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none" />
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-right min-w-[170px]">
+                                        <div className="flex items-center justify-end space-x-2">
+                                          <select value={inlineTx.type} onChange={e => setInlineTx({...inlineTx, type: e.target.value})} className={`bg-gray-900 border border-gray-700 rounded p-1.5 text-xs outline-none font-bold ${inlineTx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
+                                            <option value="expense">Dépense</option>
+                                            <option value="income">Recette</option>
+                                          </select>
+                                          <input type="number" step="0.01" placeholder="0.00" value={inlineTx.amount} onChange={e => setInlineTx({...inlineTx, amount: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-20 outline-none text-right font-bold" />
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-center">-</td>
+                                      <td className="px-4 py-3 text-center">-</td>
+                                      <td className="px-4 py-3 text-center">
+                                        <button onClick={handleInlineSubmit} disabled={!inlineTx.amount || !inlineTx.description || !inlineTx.category} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white p-2 rounded-lg" title="Ajouter l'opération">
+                                          <Plus className="w-4 h-4 mx-auto"/>
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  )}
+                                  {filteredTransactions.map((tx) => (
+                                    <tr key={tx.id} className="bg-gray-900 border-b border-gray-800 hover:bg-gray-800/50">
+                                      <td className="px-4 py-3 whitespace-nowrap">{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
+                                      <td className="px-4 py-3 whitespace-nowrap">{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
+                                      <td className="px-4 py-3 font-medium text-gray-200">{tx.description}</td>
+                                      <td className="px-4 py-3 whitespace-nowrap"><span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-full border border-gray-700">{tx.category}</span></td>
+                                      <td className="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">
+                                        <span className="block font-medium">{tx.paymentMethod || '-'}</span>
+                                        {tx.paymentMethod === 'Chèque' && tx.checkNumber && (
+                                          <span className="block text-xs text-gray-500">N° {tx.checkNumber}</span>
+                                        )}
+                                      </td>
+                                      <td className={`px-4 py-3 text-right font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</td>
+                                      <td className="px-4 py-3 text-center">
+                                        {isCurrentYearClosed ? (
+                                          <div className="flex justify-center">{tx.reconciled ? <CheckCircle className="w-6 h-6 text-gray-500" /> : <Circle className="w-6 h-6 text-gray-600" />}</div>
+                                        ) : (
+                                          <button onClick={() => toggleReconciled(tx.id, tx.reconciled)} className={`print:hidden ${tx.reconciled ? 'text-emerald-500' : 'text-gray-600'}`}>{tx.reconciled ? <CheckCircle className="w-6 h-6 mx-auto" /> : <Circle className="w-6 h-6 mx-auto" />}</button>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-3 text-center print:hidden">
+                                        {tx.receiptUrl ? (
+                                          <a href={tx.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300" title="Voir le justificatif"><Paperclip className="w-4 h-4 mx-auto"/></a>
+                                        ) : '-'}
+                                      </td>
+                                      <td className="px-4 py-3 text-center print:hidden">
+                                        {!isCurrentYearClosed && (
+                                          <div className="flex items-center justify-center space-x-3">
+                                            <button onClick={() => setEditModalTx(tx)} className="text-gray-400 hover:text-blue-400" title="Modifier"><Pencil className="w-4 h-4"/></button>
+                                            <button onClick={() => deleteTransaction(tx.id)} className="text-gray-400 hover:text-red-500" title="Supprimer"><Trash2 className="w-4 h-4"/></button>
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* BILAN ANNUEL */}
+                      {activeTab === 'balance' && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-6">
+                          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-gray-800 pb-6">
+                            <div>
+                              <h2 className="text-xl font-bold text-white">Bilan Financier {currentYear}</h2>
+                              <p className="text-xs text-gray-400 mt-1">Compte : {currentAccountId === 'all' ? 'Tous les comptes' : accounts.find(a => a.id === currentAccountId)?.name}</p>
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-3 print:hidden">
+                              <div className="bg-gray-950 p-1 rounded-lg border border-gray-800 flex">
+                                <button onClick={() => setBalanceViewMode('global')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${balanceViewMode === 'global' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>Vue Synthèse</button>
+                                <button onClick={() => setBalanceViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${balanceViewMode === 'detailed' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>Vue Détaillée</button>
+                              </div>
+
+                              <select value={balanceCategoryFilter} onChange={(e) => setBalanceCategoryFilter(e.target.value)} className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg p-2.5 outline-none">
+                                <option value="all">Toutes les catégories</option>
+                                {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                              </select>
+                              <select value={balanceTypeFilter} onChange={(e) => setBalanceTypeFilter(e.target.value)} className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg p-2.5 outline-none">
+                                <option value="all">Recettes & Dépenses</option>
+                                <option value="income">Recettes uniquement</option>
+                                <option value="expense">Dépenses uniquement</option>
+                              </select>
+
+                              <button onClick={exportCSV} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-2.5 rounded-lg flex items-center space-x-1.5 font-medium">
+                                <Download className="w-4 h-4" /><span>Exporter CSV / Sheets</span>
+                              </button>
+                              <button onClick={() => window.print()} className="bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-2.5 rounded-lg flex items-center space-x-1.5 font-medium">
+                                <Printer className="w-4 h-4" /><span>Imprimer</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="bg-gray-950 p-4 rounded-xl border border-gray-800 flex justify-between items-center">
+                            <span className="text-gray-300 font-medium">Report à nouveau (Solde au 01/01/{currentYear})</span>
+                            <span className={`text-lg font-bold ${reportANouveau >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{formatCurrency(reportANouveau)}</span>
+                          </div>
+
+                          {balanceViewMode === 'global' ? (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm text-left text-gray-300">
+                                <thead className="bg-gray-950 border-b border-gray-800 text-xs uppercase text-gray-400">
+                                  <tr>
+                                    <th className="px-6 py-4">Catégorie</th>
+                                    {(balanceTypeFilter === 'all' || balanceTypeFilter === 'income') && <th className="px-6 py-4 text-right">Recettes</th>}
+                                    {(balanceTypeFilter === 'all' || balanceTypeFilter === 'expense') && <th className="px-6 py-4 text-right">Dépenses</th>}
+                                    <th className="px-6 py-4 text-right">Solde Catégorie</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {filteredSummaryEntries.map(([cat, data]) => (
+                                    <tr key={cat} className="border-b border-gray-800 hover:bg-gray-800/30">
+                                      <td className="px-6 py-4 font-medium text-white">{cat}</td>
+                                      {(balanceTypeFilter === 'all' || balanceTypeFilter === 'income') && (
+                                        <td className="px-6 py-4 text-right text-emerald-500">{data.income > 0 ? formatCurrency(data.income) : '-'}</td>
+                                      )}
+                                      {(balanceTypeFilter === 'all' || balanceTypeFilter === 'expense') && (
+                                        <td className="px-6 py-4 text-right text-red-500">{data.expense > 0 ? formatCurrency(data.expense) : '-'}</td>
+                                      )}
+                                      <td className={`px-6 py-4 text-right font-bold ${data.total >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(data.total)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot className="bg-gray-950 border-t-2 border-gray-700 font-bold text-white">
+                                  <tr>
+                                    <td className="px-6 py-4">Total de l'exercice {currentYear}</td>
+                                    {(balanceTypeFilter === 'all' || balanceTypeFilter === 'income') && (
+                                      <td className="px-6 py-4 text-right text-emerald-500">{formatCurrency(sumIncome)}</td>
+                                    )}
+                                    {(balanceTypeFilter === 'all' || balanceTypeFilter === 'expense') && (
+                                      <td className="px-6 py-4 text-right text-red-500">{formatCurrency(sumExpense)}</td>
+                                    )}
+                                    <td className={`px-6 py-4 text-right ${sumTotal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(sumTotal)}</td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {filteredSummaryEntries.map(([cat, data]) => (
+                                <div key={cat} className="bg-gray-950 border border-gray-800 rounded-xl overflow-hidden">
+                                  <div className="p-4 bg-gray-900/60 border-b border-gray-800 flex justify-between items-center">
+                                    <h4 className="font-bold text-white">{cat} <span className="text-xs text-gray-500 font-normal ml-2">({data.items.length} opération{data.items.length > 1 ? 's' : ''})</span></h4>
+                                    <div className="flex space-x-4 text-sm">
+                                      {data.income > 0 && <span className="text-emerald-500">+{formatCurrency(data.income)}</span>}
+                                      {data.expense > 0 && <span className="text-red-500">-{formatCurrency(data.expense)}</span>}
+                                      <span className={`font-bold ${data.total >= 0 ? 'text-white' : 'text-red-400'}`}>= {formatCurrency(data.total)}</span>
+                                    </div>
+                                  </div>
+                                  {data.items.length > 0 ? (
+                                    <table className="w-full text-xs text-left text-gray-400">
+                                      <tbody>
+                                        {data.items.map(item => (
+                                          <tr key={item.id} className="border-b border-gray-900 last:border-0 hover:bg-gray-900/30">
+                                            <td className="px-4 py-2.5 w-28">{new Date(item.date).toLocaleDateString('fr-FR')}</td>
+                                            <td className="px-4 py-2.5 text-gray-200 font-medium">{item.description}</td>
+                                            <td className="px-4 py-2.5 w-32">{item.paymentMethod} {item.checkNumber ? `(N°${item.checkNumber})` : ''}</td>
+                                            <td className={`px-4 py-2.5 text-right font-bold ${item.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
+                                              {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  ) : (
+                                    <p className="p-4 text-xs text-gray-600 italic">Aucune opération dans cette catégorie pour {currentYear}.</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="bg-gray-950 p-5 rounded-xl border border-gray-800 flex justify-between items-center">
+                            <span className="text-white font-bold text-base">Solde Final Cumulé (Report + Exercice {currentYear})</span>
+                            <span className={`text-2xl font-bold ${(reportANouveau + sumTotal) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {formatCurrency(reportANouveau + sumTotal)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* AUTOMATISATIONS */}
+                      {activeTab === 'automations' && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+                          <div className="flex justify-between items-center mb-6">
+                            <div>
+                              <h2 className="text-xl font-bold text-white">Opérations Récurrentes & Modèles</h2>
+                              <p className="text-xs text-gray-400 mt-1">Créez vos opérations régulières et générez-les en 1 clic dans le livre de comptes.</p>
+                            </div>
+                            <button onClick={() => setIsAddAutomationOpen(true)} className="flex items-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors">
+                              <Plus className="w-4 h-4"/><span>Nouvelle Automatisation</span>
+                            </button>
+                          </div>
+
+                          {automations.length === 0 ? (
+                            <p className="text-gray-500 text-sm text-center py-8">Aucune opération récurrente configurée.</p>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm text-left text-gray-300">
+                                <thead className="text-xs text-gray-400 uppercase bg-gray-950 border-b border-gray-800">
+                                  <tr>
+                                    <th className="px-4 py-3">Libellé</th>
+                                    <th className="px-4 py-3">Compte</th>
+                                    <th className="px-4 py-3">Catégorie</th>
+                                    <th className="px-4 py-3">Fréquence</th>
+                                    <th className="px-4 py-3 text-right">Montant</th>
+                                    <th className="px-4 py-3 text-center">Actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {automations.map((auto) => (
+                                    <tr key={auto.id} className="border-b border-gray-800 hover:bg-gray-800/40">
+                                      <td className="px-4 py-3 font-medium text-white">{auto.description}</td>
+                                      <td className="px-4 py-3">{accounts.find(a => a.id === auto.accountId)?.name || '-'}</td>
+                                      <td className="px-4 py-3"><span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-full border border-gray-700">{auto.category}</span></td>
+                                      <td className="px-4 py-3">{auto.frequency === 'monthly' ? 'Mensuelle' : 'Annuelle'} ({auto.paymentMethod})</td>
+                                      <td className={`px-4 py-3 text-right font-bold ${auto.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
+                                        {auto.type === 'income' ? '+' : '-'}{formatCurrency(auto.amount)}
+                                      </td>
+                                      <td className="px-4 py-3 text-center">
+                                        <div className="flex items-center justify-center space-x-3">
+                                          <button onClick={() => executeAutomationNow(auto)} className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-lg text-xs flex items-center space-x-1" title="Générer cette écriture aujourd'hui">
+                                            <Play className="w-3 h-3" /><span>Générer</span>
+                                          </button>
+                                          <button onClick={() => deleteAutomation(auto.id)} className="text-gray-500 hover:text-red-500">
+                                            <Trash2 className="w-4 h-4"/>
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* PARAMETRES */}
+                      {activeTab === 'settings' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* CONNEXION CLOUD FIREBASE */}
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-2">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                              <div>
+                                <h2 className="text-lg font-bold text-white flex items-center"><Shield className="w-5 h-5 mr-2 text-emerald-400"/> Coffre-Fort Cloud Firebase (Sécurisé)</h2>
+                                <p className="text-sm text-gray-400">Vos données sont stockées dans le coffre privé <code className="text-emerald-400 bg-gray-950 px-1.5 py-0.5 rounded">{EXPECTED_VAULT_KEY}</code> invisible sans le mot de passe.</p>
+                              </div>
+                              <span className={`text-xs px-3 py-1.5 rounded-full font-bold border ${
+                                cloudStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                cloudStatus === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/30' :
+                                'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                              }`}>
+                                {cloudStatus === 'connected' ? '● Connecté au Cloud en direct' :
+                                 cloudStatus === 'error' ? '● Accès bloqué (Vérifiez l\'onglet Règles sur Firebase)' :
+                                 '● Connexion en cours...'}
+                              </span>
+                            </div>
+                            <form onSubmit={saveFirebaseUrlConfig} className="flex flex-col sm:flex-row gap-3">
+                              <input 
+                                type="url" 
+                                value={tempFbUrl} 
+                                onChange={(e) => setTempFbUrl(e.target.value)} 
+                                placeholder="URL de votre Realtime Database" 
+                                className="flex-1 bg-gray-950 border border-gray-700 rounded-xl p-3 text-sm text-white outline-none focus:border-red-500"
+                              />
+                              <button type="submit" className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl text-sm font-bold transition-colors whitespace-nowrap">
+                                Mettre à jour l'URL
+                              </button>
+                            </form>
+                          </div>
+
+                          {/* SAUVEGARDE ET EXPORT */}
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-2">
+                            <h2 className="text-lg font-bold text-white mb-2 flex items-center"><Database className="w-5 h-5 mr-2 text-red-500"/> Sauvegardes & Exportations</h2>
+                            <p className="text-sm text-gray-400 mb-6">Vos données sont enregistrées automatiquement dans le Cloud Firebase et dans votre navigateur. Pensez à télécharger régulièrement une copie de sauvegarde (.json) sur votre ordinateur.</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                              <button onClick={exportBackup} className="flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white py-3.5 px-4 rounded-xl font-medium transition-colors shadow-lg shadow-blue-600/20">
+                                <Download className="w-5 h-5"/><span>Sauvegarder sur le PC (.json)</span>
+                              </button>
+                              <label className="flex items-center justify-center space-x-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white py-3.5 px-4 rounded-xl font-medium cursor-pointer transition-colors">
+                                <Upload className="w-5 h-5 text-blue-400"/><span>Charger une sauvegarde (.json)</span>
+                                <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
+                              </label>
+                              <button onClick={exportCSV} className="flex items-center justify-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-4 rounded-xl font-medium transition-colors shadow-lg shadow-emerald-600/20">
+                                <FileText className="w-5 h-5"/><span>Exporter Excel / Sheets (.csv)</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><CreditCard className="w-5 h-5 mr-2 text-red-500"/> Comptes Bancaires & Caisses</h2>
+                            <ul className="space-y-3 mb-6">
+                              {accounts.map(acc => (
+                                <li key={acc.id} className="flex justify-between items-center bg-gray-950 p-3 rounded-lg border border-gray-800">
+                                  <span className="text-gray-300 font-medium">{acc.name}</span>
+                                  {accounts.length > 1 && (
+                                    <button onClick={() => deleteAccount(acc.id)} className="text-gray-500 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                            <form onSubmit={addAccount} className="flex space-x-2">
+                              <input type="text" value={newAccountName} onChange={e => setNewAccountName(e.target.value)} placeholder="Nouveau compte..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-2.5 text-sm text-white outline-none" />
+                              <button className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium">Ajouter</button>
+                            </form>
+                          </div>
+
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+                            <h2 className="text-lg font-bold text-white mb-4 flex items-center"><List className="w-5 h-5 mr-2 text-red-500"/> Catégories Comptables</h2>
+                            <ul className="space-y-3 mb-6 max-h-64 overflow-y-auto pr-1">
+                              {categories.map(cat => (
+                                <li key={cat.id} className="flex justify-between items-center bg-gray-950 p-3 rounded-lg border border-gray-800">
+                                  <span className="text-gray-300 font-medium">{cat.name}</span>
+                                  {categories.length > 1 && (
+                                    <button onClick={() => deleteCategory(cat.id)} className="text-gray-500 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                            <form onSubmit={addCategory} className="flex space-x-2">
+                              <input type="text" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} placeholder="Nouvelle catégorie..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-2.5 text-sm text-white outline-none" />
+                              <button className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium">Ajouter</button>
+                            </form>
+                          </div>
+
+                          {/* GESTION DES EXERCICES EN BAS DES PARAMETRES */}
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-2">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                              <div>
+                                <h2 className="text-lg font-bold text-white flex items-center"><Archive className="w-5 h-5 mr-2 text-red-500"/> Gestion des Exercices (Années)</h2>
+                                <p className="text-sm text-gray-400">Ouvrez une nouvelle année, verrouillez un exercice terminé ou supprimez une année vide.</p>
+                              </div>
+                              <button onClick={openNextYear} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center space-x-2">
+                                <Plus className="w-4 h-4" />
+                                <span>Ouvrir l'année {Math.max(...availableYears.map(Number)) + 1}</span>
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                              {availableYears.map(year => {
+                                const isClosed = closedYears.includes(year);
+                                const yearTxCount = transactions.filter(tx => tx.date.startsWith(year)).length;
+                                return (
+                                  <div key={year} className="bg-gray-950 p-4 rounded-xl border border-gray-800 flex flex-col justify-between space-y-4">
+                                    <div className="flex justify-between items-center">
+                                      <div>
+                                        <span className="text-lg font-bold text-white">Année {year}</span>
+                                        <p className="text-xs text-gray-500">{yearTxCount} opération(s)</p>
+                                      </div>
+                                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${isClosed ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+                                        {isClosed ? 'Clôturé' : 'Ouvert'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center space-x-2 pt-2 border-t border-gray-800/60">
+                                      <button onClick={() => toggleYearClosure(year)} className="flex-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-200 py-2 px-3 rounded-lg flex items-center justify-center space-x-1.5 transition-colors">
+                                        {isClosed ? <Unlock className="w-3.5 h-3.5 text-emerald-400"/> : <Lock className="w-3.5 h-3.5 text-yellow-500"/>}
+                                        <span>{isClosed ? 'Déverrouiller' : 'Clôturer'}</span>
+                                      </button>
+                                      {yearTxCount === 0 && (
+                                        <button onClick={() => deleteYear(year)} className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-colors" title="Supprimer cette année vide">
+                                          <Trash2 className="w-4 h-4"/>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </main>
+              </div>
+
+              {isAddModalOpen && <AddTransactionModal onClose={() => setIsAddModalOpen(false)} onSave={addTransaction} accounts={accounts} currentAccountId={currentAccountId} categories={categories} />}
+              {editModalTx && <EditTransactionModal tx={editModalTx} onClose={() => setEditModalTx(null)} onSave={handleEditTransaction} accounts={accounts} categories={categories} />}
+              {isAddAutomationOpen && <AddAutomationModal onClose={() => setIsAddAutomationOpen(false)} onSave={addAutomation} accounts={accounts} categories={categories} />}
+              
+              {/* MODALE DE CHOIX DU COMPTE POUR LE LIVRE DE COMPTES */}
+              {isAccountPickerOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 print:hidden">
+                  <div className="bg-gray-900 border border-gray-700 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl">
+                    <div className="p-6 border-b border-gray-800 flex justify-between items-center">
+                      <div className="flex items-center space-x-3">
+                        <div className="bg-red-600 p-2.5 rounded-xl shadow-lg shadow-red-600/20">
+                          <CreditCard className="w-6 h-6 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-white">Choix du Compte</h3>
+                          <p className="text-xs text-gray-400">Quel compte souhaitez-vous traiter en écriture ?</p>
+                        </div>
+                      </div>
+                      <button onClick={() => { setHasChosenInitialAccount(true); setIsAccountPickerOpen(false); }} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
+                    </div>
+                    <div className="p-6 space-y-3 max-h-[70vh] overflow-y-auto">
+                      {accounts.map(acc => {
+                        const bal = accountBalances[acc.id] || { pointed: 0, unpointed: 0, theoretical: 0 };
+                        const isSelected = currentAccountId === acc.id;
+                        return (
+                          <button
+                            key={acc.id}
+                            onClick={() => { setCurrentAccountId(acc.id); setHasChosenInitialAccount(true); setIsAccountPickerOpen(false); }}
+                            className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between group ${isSelected ? 'bg-red-600/10 border-red-500 shadow-lg shadow-red-600/5' : 'bg-gray-950 border-gray-800 hover:border-gray-600'}`}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <div className={`p-3 rounded-xl transition-colors ${isSelected ? 'bg-red-600 text-white' : 'bg-gray-900 text-gray-400 group-hover:text-white'}`}>
+                                <CreditCard className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-white text-base">{acc.name}</h4>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  Pointé : <span className={bal.pointed >= 0 ? 'text-emerald-400 font-semibold' : 'text-red-400 font-semibold'}>{formatCurrency(bal.pointed)}</span>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs text-gray-500 mb-0.5">Solde Théorique</p>
+                              <p className={`text-base font-bold ${bal.theoretical >= 0 ? 'text-white' : 'text-red-400'}`}>{formatCurrency(bal.theoretical)}</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+
+                      <div className="pt-2">
+                        <button
+                          onClick={() => { setCurrentAccountId('all'); setHasChosenInitialAccount(true); setIsAccountPickerOpen(false); }}
+                          className={`w-full text-center p-3.5 rounded-2xl border transition-all font-medium text-sm flex items-center justify-center space-x-2 ${currentAccountId === 'all' ? 'bg-red-600/10 border-red-500 text-red-400' : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'}`}
+                        >
+                          <LayoutDashboard className="w-4 h-4" />
+                          <span>Voir tous les comptes confondus</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODALE DE CHOIX DE L'ANNÉE (EXERCICE) */}
+              {isYearPickerOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 print:hidden">
+                  <div className="bg-gray-900 border border-gray-700 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
+                    <div className="p-6 border-b border-gray-800 flex justify-between items-center">
+                      <div className="flex items-center space-x-3">
+                        <div className="bg-red-600 p-2.5 rounded-xl shadow-lg shadow-red-600/20">
+                          <Calendar className="w-6 h-6 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-white">Choix de l'Exercice</h3>
+                          <p className="text-xs text-gray-400">Sélectionnez l'année comptable à consulter</p>
+                        </div>
+                      </div>
+                      <button onClick={() => setIsYearPickerOpen(false)} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
+                    </div>
+                    <div className="p-6 space-y-3 max-h-[70vh] overflow-y-auto">
+                      {availableYears.map(year => {
+                        const isSelected = currentYear === year;
+                        const isClosed = closedYears.includes(year);
+                        const yearTxCount = transactions.filter(tx => tx.date.startsWith(year)).length;
+                        return (
+                          <button
+                            key={year}
+                            onClick={() => { setCurrentYear(year); setIsYearPickerOpen(false); }}
+                            className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between group ${isSelected ? 'bg-red-600/10 border-red-500 shadow-lg shadow-red-600/5' : 'bg-gray-950 border-gray-800 hover:border-gray-600'}`}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <div className={`p-3 rounded-xl transition-colors ${isSelected ? 'bg-red-600 text-white' : 'bg-gray-900 text-gray-400 group-hover:text-white'}`}>
+                                <Calendar className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-white text-lg">Année {year}</h4>
+                                <p className="text-xs text-gray-400">{yearTxCount} opération{yearTxCount > 1 ? 's' : ''} enregistrée{yearTxCount > 1 ? 's' : ''}</p>
+                              </div>
+                            </div>
+                            <div>
+                              <span className={`text-xs px-3 py-1.5 rounded-full font-semibold flex items-center space-x-1.5 ${isClosed ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+                                {isClosed ? <Lock className="w-3 h-3 mr-1" /> : <Unlock className="w-3 h-3 mr-1" />}
+                                <span>{isClosed ? 'Clôturé' : 'En cours'}</span>
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODALE DE CONFIRMATION DE RESTAURATION */}
+              {restoreData && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+                  <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+                    <h3 className="text-xl font-bold text-white">Restaurer la sauvegarde ?</h3>
+                    <p className="text-sm text-gray-300">
+                      Vous êtes sur le point de remplacer les données actuelles par une sauvegarde contenant <strong>{restoreData.transactions?.length || 0} opération(s)</strong> et <strong>{restoreData.accounts?.length || 0} compte(s)</strong>.
+                    </p>
+                    <div className="flex space-x-3 pt-2">
+                      <button onClick={() => setRestoreData(null)} className="flex-1 py-2.5 bg-gray-800 text-white rounded-xl">Annuler</button>
+                      <button onClick={confirmRestore} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold">Confirmer</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        function AddTransactionModal({ onClose, onSave, accounts, currentAccountId, categories }) {
+          const [type, setType] = useState('expense');
+          const [amount, setAmount] = useState('');
+          const [description, setDescription] = useState('');
+          const [category, setCategory] = useState('');
+          const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+          const [accountId, setAccountId] = useState(currentAccountId === 'all' && accounts.length > 0 ? accounts[0].id : currentAccountId);
+          const [paymentMethod, setPaymentMethod] = useState('CB');
+          const [checkNumber, setCheckNumber] = useState('');
+          const [receiptUrl, setReceiptUrl] = useState('');
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!amount || !description || !category) return;
+            onSave({
+              type,
+              amount: parseFloat(amount),
+              description,
+              category,
+              date,
+              accountId,
+              paymentMethod,
+              checkNumber: paymentMethod === 'Chèque' ? checkNumber.trim() : null,
+              receiptUrl: receiptUrl.trim() || null,
+              reconciled: false
+            });
+          };
+
+          return (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md shadow-2xl">
+                <div className="flex justify-between items-center p-6 border-b border-gray-800"><h3 className="text-xl font-bold text-white">Nouvelle Opération</h3><button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button></div>
+                <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-4">
+                    <button type="button" onClick={() => setType('expense')} className={`p-3 rounded-xl border flex items-center justify-center space-x-2 ${type === 'expense' ? 'bg-red-500/10 border-red-500 text-red-500' : 'bg-gray-800 border-gray-700 text-gray-400'}`}><ArrowDownRight className="w-5 h-5"/><span className="font-medium">Dépense</span></button>
+                    <button type="button" onClick={() => setType('income')} className={`p-3 rounded-xl border flex items-center justify-center space-x-2 ${type === 'income' ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-gray-800 border-gray-700 text-gray-400'}`}><ArrowUpRight className="w-5 h-5"/><span className="font-medium">Recette</span></button>
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Montant (€)</label><input type="number" step="0.01" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Date</label><input type="date" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Compte</label><select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={accountId} onChange={(e) => setAccountId(e.target.value)}>{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select></div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Mode</label>
+                      <select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                        <option value="CB">CB</option>
+                        <option value="Chèque">Chèque</option>
+                        <option value="Prélèvement">Prélèvement</option>
+                        <option value="Virement">Virement</option>
+                        <option value="Espèces">Espèces</option>
+                      </select>
+                    </div>
+                    {paymentMethod === 'Chèque' && (
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-1">N° de chèque</label>
+                        <input type="text" required placeholder="Ex: 001245" className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)} />
+                      </div>
+                    )}
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Libellé</label><input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Catégorie</label>
+                    <AutocompleteInput value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} openUpward={true} placeholder="Rechercher une catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Lien Justificatif (Optionnel)</label><input type="url" placeholder="https://drive.google.com/..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none text-sm" value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} /></div>
+                  <div className="pt-4 flex space-x-3"><button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button><button type="submit" className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold">Enregistrer</button></div>
+                </form>
+              </div>
+            </div>
+          );
+        }
+
+        function EditTransactionModal({ tx, onClose, onSave, accounts, categories }) {
+          const [type, setType] = useState(tx.type);
+          const [amount, setAmount] = useState(tx.amount);
+          const [description, setDescription] = useState(tx.description);
+          const [category, setCategory] = useState(tx.category);
+          const [date, setDate] = useState(tx.date);
+          const [accountId, setAccountId] = useState(tx.accountId);
+          const [paymentMethod, setPaymentMethod] = useState(tx.paymentMethod || 'CB');
+          const [checkNumber, setCheckNumber] = useState(tx.checkNumber || '');
+          const [receiptUrl, setReceiptUrl] = useState(tx.receiptUrl || '');
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!amount || !description || !category) return;
+            onSave({
+              ...tx,
+              type,
+              amount: parseFloat(amount),
+              description,
+              category,
+              date,
+              accountId,
+              paymentMethod,
+              checkNumber: paymentMethod === 'Chèque' ? checkNumber.trim() : null,
+              receiptUrl: receiptUrl.trim() || null
+            });
+          };
+
+          return (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md shadow-2xl">
+                <div className="flex justify-between items-center p-6 border-b border-gray-800"><h3 className="text-xl font-bold text-white">Modifier l'opération</h3><button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button></div>
+                <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-4">
+                    <button type="button" onClick={() => setType('expense')} className={`p-3 rounded-xl border flex items-center justify-center space-x-2 ${type === 'expense' ? 'bg-red-500/10 border-red-500 text-red-500' : 'bg-gray-800 border-gray-700 text-gray-400'}`}><ArrowDownRight className="w-5 h-5"/><span className="font-medium">Dépense</span></button>
+                    <button type="button" onClick={() => setType('income')} className={`p-3 rounded-xl border flex items-center justify-center space-x-2 ${type === 'income' ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-gray-800 border-gray-700 text-gray-400'}`}><ArrowUpRight className="w-5 h-5"/><span className="font-medium">Recette</span></button>
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Montant (€)</label><input type="number" step="0.01" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Date</label><input type="date" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Compte</label><select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={accountId} onChange={(e) => setAccountId(e.target.value)}>{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select></div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Mode</label>
+                      <select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                        <option value="CB">CB</option>
+                        <option value="Chèque">Chèque</option>
+                        <option value="Prélèvement">Prélèvement</option>
+                        <option value="Virement">Virement</option>
+                        <option value="Espèces">Espèces</option>
+                      </select>
+                    </div>
+                    {paymentMethod === 'Chèque' && (
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-1">N° de chèque</label>
+                        <input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)} />
+                      </div>
+                    )}
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Libellé</label><input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Catégorie</label>
+                    <AutocompleteInput value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} openUpward={true} placeholder="Rechercher une catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Lien Justificatif (Optionnel)</label><input type="url" placeholder="https://drive.google.com/..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none text-sm" value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} /></div>
+                  <div className="pt-4 flex space-x-3"><button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button><button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold">Mettre à jour</button></div>
+                </form>
+              </div>
+            </div>
+          );
+        }
+
+        function AddAutomationModal({ onClose, onSave, accounts, categories }) {
+          const [type, setType] = useState('expense');
+          const [amount, setAmount] = useState('');
+          const [description, setDescription] = useState('');
+          const [category, setCategory] = useState('');
+          const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+          const [frequency, setFrequency] = useState('monthly');
+          const [paymentMethod, setPaymentMethod] = useState('Prélèvement');
+          const [accountId, setAccountId] = useState(accounts.length > 0 ? accounts[0].id : '');
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!amount || !description || !category) return;
+            onSave({ type, amount: parseFloat(amount), description, category, startDate, nextDate: startDate, frequency, paymentMethod, accountId });
+          };
+
+          return (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md shadow-2xl">
+                <div className="flex justify-between items-center p-6 border-b border-gray-800"><h3 className="text-xl font-bold text-white">Nouvelle Automatisation</h3><button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button></div>
+                <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-4">
+                    <button type="button" onClick={() => setType('expense')} className={`p-3 rounded-xl border flex items-center justify-center space-x-2 ${type === 'expense' ? 'bg-red-500/10 border-red-500 text-red-500' : 'bg-gray-800 border-gray-700 text-gray-400'}`}><ArrowDownRight className="w-5 h-5"/><span className="font-medium">Dépense</span></button>
+                    <button type="button" onClick={() => setType('income')} className={`p-3 rounded-xl border flex items-center justify-center space-x-2 ${type === 'income' ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-gray-800 border-gray-700 text-gray-400'}`}><ArrowUpRight className="w-5 h-5"/><span className="font-medium">Recette</span></button>
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Montant (€)</label><input type="number" step="0.01" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Date de référence</label><input type="date" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div><label className="block text-sm text-gray-400 mb-1">Fréquence</label><select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={frequency} onChange={(e) => setFrequency(e.target.value)}><option value="monthly">Mensuelle</option><option value="yearly">Annuelle</option></select></div>
+                    <div><label className="block text-sm text-gray-400 mb-1">Mode</label><select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}><option value="Prélèvement">Prélèvement</option><option value="Virement">Virement</option><option value="CB">CB</option><option value="Chèque">Chèque</option></select></div>
+                  </div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Compte</label><select className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={accountId} onChange={(e) => setAccountId(e.target.value)}>{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select></div>
+                  <div><label className="block text-sm text-gray-400 mb-1">Libellé</label><input type="text" required className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Catégorie</label>
+                    <AutocompleteInput value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} openUpward={true} placeholder="Rechercher une catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                  </div>
+                  <div className="pt-4 flex space-x-3"><button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button><button type="submit" className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold">Enregistrer</button></div>
+                </form>
+              </div>
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
