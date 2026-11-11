@@ -69,9 +69,10 @@
     const ChevronDown = ({ className }) => <Icon className={className}><path d="m6 9 6 6 6-6"/></Icon>;
     const Users = ({ className }) => <Icon className={className}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
 
-    // --- CONFIGURATION FIREBASE ---
+    // --- CONFIGURATION FIREBASE & GOOGLE DRIVE ---
     const DEFAULT_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.europe-west1.firebasedatabase.app";
     const FALLBACK_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.firebaseio.com";
+    const DEFAULT_DRIVE_SCRIPT_URL = "";
 
     // --- SÉCURITÉ : VÉRIFICATION MASQUÉE DU MOT DE PASSE ---
     const EXPECTED_VAULT_KEY = "vault_sp_51a9496ee31d9c64";
@@ -82,7 +83,41 @@
       return targetCodes.every((code, idx) => clean.charCodeAt(idx) === code);
     };
 
-    // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE (MÊME DEPUIS UN FICHIER LOCAL PC) ---
+    // --- HELPER : FUSION INTELLIGENTE MULTI-APPAREILS (ANTI-ÉCRASEMENT) ---
+    // Combine les créations/modifications du PC et du Téléphone par identifiant unique sans jamais perdre une écriture
+    const smartMergeById = (localArr = [], cloudArr = [], deletedSet = new Set(), uniqueNameField = null) => {
+      const map = new Map();
+      (cloudArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(String(item.id))) {
+          map.set(String(item.id), item);
+        }
+      });
+      (localArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(String(item.id))) {
+          const id = String(item.id);
+          const existing = map.get(id);
+          if (!existing) {
+            // Évite les doublons de noms pour les catégories / fournisseurs / comptes
+            if (uniqueNameField && item[uniqueNameField]) {
+              const dup = Array.from(map.values()).find(
+                x => (x[uniqueNameField] || '').trim().toLowerCase() === (item[uniqueNameField] || '').trim().toLowerCase()
+              );
+              if (dup) return;
+            }
+            map.set(id, item);
+          } else {
+            const localMod = item.lastModified || 0;
+            const cloudMod = existing.lastModified || 0;
+            if (localMod >= cloudMod) {
+              map.set(id, { ...existing, ...item });
+            }
+          }
+        }
+      });
+      return Array.from(map.values());
+    };
+
+    // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE ---
     const uploadFileToGoogleDrive = async (file, scriptUrl, prefixLabel = '') => {
       const cleanUrl = (scriptUrl || '').trim();
       if (!cleanUrl.startsWith('https://script.google.com/macros/s/') || !cleanUrl.endsWith('/exec')) {
@@ -241,12 +276,18 @@
         return saved ? JSON.parse(saved) : [];
       });
 
-      // URL Passerelle Google Drive Apps Script (synchronisée avec Firebase)
+      // Mémorise les IDs supprimés volontairement pour que la fusion entre appareils ne les fasse pas réapparaître
+      const [deletedIds, setDeletedIds] = useState(() => {
+        const saved = localStorage.getItem('sp_rieumes_deletedIds');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      // URL Passerelle Google Drive Apps Script
       const [driveScriptUrl, setDriveScriptUrl] = useState(() => {
-        return localStorage.getItem('sp_rieumes_drive_script_url') || '';
+        return localStorage.getItem('sp_rieumes_drive_script_url') || DEFAULT_DRIVE_SCRIPT_URL;
       });
       const [tempDriveScriptUrl, setTempDriveScriptUrl] = useState(() => {
-        return localStorage.getItem('sp_rieumes_drive_script_url') || '';
+        return localStorage.getItem('sp_rieumes_drive_script_url') || DEFAULT_DRIVE_SCRIPT_URL;
       });
       const [driveTestMsg, setDriveTestMsg] = useState(null);
 
@@ -254,7 +295,7 @@
         return localStorage.getItem('sp_rieumes_pending_sync') === 'true';
       });
 
-      // --- SYNCHRONISATION CLOUD FIREBASE SÉCURISÉE ---
+      // --- SYNCHRONISATION CLOUD FIREBASE AVEC FUSION INTELLIGENTE ---
       const [firebaseDbUrl, setFirebaseDbUrl] = useState(() => localStorage.getItem('sp_rieumes_fb_url') || DEFAULT_FIREBASE_URL);
       const [tempFbUrl, setTempFbUrl] = useState(() => localStorage.getItem('sp_rieumes_fb_url') || DEFAULT_FIREBASE_URL);
       const [cloudStatus, setCloudStatus] = useState('connecting');
@@ -262,6 +303,17 @@
       const dbRef = useRef(null);
       const activeRestUrl = useRef(null);
       const isUpdatingFromCloud = useRef(false);
+      const hasInitialCloudSyncCompleted = useRef(false);
+
+      // Références toujours à jour pour la fusion temps réel
+      const latestStateRef = useRef({
+        transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl
+      });
+      useEffect(() => {
+        latestStateRef.current = {
+          transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl
+        };
+      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl]);
 
       const writeDataToCloud = async (payload) => {
         if (dbRef.current) {
@@ -311,57 +363,98 @@
         let activeRef = null;
         let onValueChange = null;
 
+        // FUSION LIGNE PAR LIGNE : Additionne les écritures du PC et du Cloud sans jamais en écraser aucune !
         const applyCloudData = (data, saveCallback) => {
-          const localUpdatedAt = localStorage.getItem('sp_rieumes_updatedAt') || '1970-01-01T00:00:00.000Z';
+          const cur = latestStateRef.current;
           const hasPendingLocalChanges = localStorage.getItem('sp_rieumes_pending_sync') === 'true';
+          const localDrive = localStorage.getItem('sp_rieumes_drive_script_url') || cur.driveScriptUrl || DEFAULT_DRIVE_SCRIPT_URL;
 
           if (data) {
-            const cloudUpdatedAt = data.updatedAt || '1970-01-01T00:00:00.000Z';
+            const mergedDeletedList = Array.from(new Set([
+              ...(cur.deletedIds || []).map(String),
+              ...(data.deletedIds || []).map(String)
+            ])).slice(-1000);
+            const deletedSet = new Set(mergedDeletedList);
 
-            if ((hasPendingLocalChanges || localUpdatedAt > cloudUpdatedAt) && localUpdatedAt !== '1970-01-01T00:00:00.000Z') {
-              saveCallback({
-                transactions,
-                accounts,
-                categories,
-                suppliers,
-                automations,
-                closedYears,
-                manuallyOpenedYears,
-                driveScriptUrl,
-                updatedAt: localUpdatedAt
-              }).then(() => {
-                localStorage.setItem('sp_rieumes_pending_sync', 'false');
-                setPendingOfflineSync(false);
-              }).catch(() => {});
-            } else {
-              isUpdatingFromCloud.current = true;
-              setTransactions(data.transactions || []);
-              if (data.accounts) setAccounts(data.accounts);
-              if (data.categories) setCategories(data.categories);
-              if (data.suppliers) setSuppliers(data.suppliers);
-              setAutomations(data.automations || []);
-              setClosedYears(data.closedYears || []);
-              setManuallyOpenedYears(data.manuallyOpenedYears || []);
-              if (data.driveScriptUrl !== undefined) {
-                setDriveScriptUrl(data.driveScriptUrl || '');
-                setTempDriveScriptUrl(data.driveScriptUrl || '');
-              }
-              localStorage.setItem('sp_rieumes_updatedAt', cloudUpdatedAt);
-              localStorage.setItem('sp_rieumes_pending_sync', 'false');
-              setPendingOfflineSync(false);
-              setTimeout(() => { isUpdatingFromCloud.current = false; }, 250);
+            const mergedTransactions = smartMergeById(cur.transactions, data.transactions, deletedSet);
+            const mergedAccounts = smartMergeById(cur.accounts, data.accounts, deletedSet, 'name');
+            const mergedCategories = smartMergeById(cur.categories, data.categories, deletedSet, 'name');
+            const mergedSuppliers = smartMergeById(cur.suppliers, data.suppliers, deletedSet, 'name');
+            const mergedAutomations = smartMergeById(cur.automations, data.automations, deletedSet);
+
+            const mergedOpenedYears = Array.from(new Set([
+              ...(cur.manuallyOpenedYears || []),
+              ...(data.manuallyOpenedYears || [])
+            ]));
+
+            const localUpdatedAt = localStorage.getItem('sp_rieumes_updatedAt') || '1970-01-01T00:00:00.000Z';
+            const cloudUpdatedAt = data.updatedAt || '1970-01-01T00:00:00.000Z';
+            const mergedClosedYears = (hasPendingLocalChanges && localUpdatedAt > cloudUpdatedAt)
+              ? (cur.closedYears || [])
+              : (data.closedYears || []);
+
+            const mergedDriveUrl = (data.driveScriptUrl && data.driveScriptUrl.trim())
+              ? data.driveScriptUrl.trim()
+              : (localDrive ? localDrive.trim() : '');
+
+            isUpdatingFromCloud.current = true;
+            setTransactions(mergedTransactions);
+            if (mergedAccounts.length > 0) setAccounts(mergedAccounts);
+            if (mergedCategories.length > 0) setCategories(mergedCategories);
+            if (mergedSuppliers.length > 0) setSuppliers(mergedSuppliers);
+            setAutomations(mergedAutomations);
+            setClosedYears(mergedClosedYears);
+            setManuallyOpenedYears(mergedOpenedYears);
+            setDeletedIds(mergedDeletedList);
+
+            if (mergedDriveUrl) {
+              setDriveScriptUrl(mergedDriveUrl);
+              setTempDriveScriptUrl(mergedDriveUrl);
+              localStorage.setItem('sp_rieumes_drive_script_url', mergedDriveUrl);
             }
+
+            const nowIso = new Date().toISOString();
+            localStorage.setItem('sp_rieumes_updatedAt', nowIso);
+            localStorage.setItem('sp_rieumes_pending_sync', 'false');
+            setPendingOfflineSync(false);
+            hasInitialCloudSyncCompleted.current = true;
+
+            const cloudTxCount = (data.transactions || []).length;
+            const needPushBack =
+              hasPendingLocalChanges ||
+              mergedTransactions.length !== cloudTxCount ||
+              (mergedDriveUrl && !data.driveScriptUrl) ||
+              mergedDeletedList.length !== (data.deletedIds || []).length;
+
+            if (needPushBack) {
+              saveCallback({
+                transactions: mergedTransactions,
+                accounts: mergedAccounts.length > 0 ? mergedAccounts : cur.accounts,
+                categories: mergedCategories.length > 0 ? mergedCategories : cur.categories,
+                suppliers: mergedSuppliers.length > 0 ? mergedSuppliers : cur.suppliers,
+                automations: mergedAutomations,
+                closedYears: mergedClosedYears,
+                manuallyOpenedYears: mergedOpenedYears,
+                deletedIds: mergedDeletedList,
+                driveScriptUrl: mergedDriveUrl,
+                updatedAt: nowIso
+              }).catch(() => {});
+            }
+
+            setTimeout(() => { isUpdatingFromCloud.current = false; }, 350);
           } else {
             const nowIso = new Date().toISOString();
+            hasInitialCloudSyncCompleted.current = true;
             saveCallback({
-              transactions,
-              accounts,
-              categories,
-              suppliers,
-              automations,
-              closedYears,
-              manuallyOpenedYears,
-              driveScriptUrl,
+              transactions: cur.transactions,
+              accounts: cur.accounts,
+              categories: cur.categories,
+              suppliers: cur.suppliers,
+              automations: cur.automations,
+              closedYears: cur.closedYears,
+              manuallyOpenedYears: cur.manuallyOpenedYears,
+              deletedIds: cur.deletedIds || [],
+              driveScriptUrl: localDrive,
               updatedAt: nowIso
             }).then(() => {
               localStorage.setItem('sp_rieumes_updatedAt', nowIso);
@@ -437,7 +530,7 @@
         };
       }, [firebaseDbUrl, isAuthenticated]);
 
-      // Sauvegarde automatique dans le navigateur ET dans le Cloud
+      // Sauvegarde automatique dans le navigateur ET dans le Cloud (uniquement après la 1ère fusion Cloud)
       useEffect(() => {
         localStorage.setItem('sp_rieumes_transactions', JSON.stringify(transactions));
         localStorage.setItem('sp_rieumes_accounts', JSON.stringify(accounts));
@@ -446,9 +539,12 @@
         localStorage.setItem('sp_rieumes_automations', JSON.stringify(automations));
         localStorage.setItem('sp_rieumes_closedYears', JSON.stringify(closedYears));
         localStorage.setItem('sp_rieumes_manuallyOpenedYears', JSON.stringify(manuallyOpenedYears));
-        localStorage.setItem('sp_rieumes_drive_script_url', driveScriptUrl || '');
+        localStorage.setItem('sp_rieumes_deletedIds', JSON.stringify(deletedIds));
+        if (driveScriptUrl) {
+          localStorage.setItem('sp_rieumes_drive_script_url', driveScriptUrl);
+        }
 
-        if (!isUpdatingFromCloud.current && isAuthenticated) {
+        if (!isUpdatingFromCloud.current && isAuthenticated && hasInitialCloudSyncCompleted.current) {
           const nowIso = new Date().toISOString();
           localStorage.setItem('sp_rieumes_updatedAt', nowIso);
 
@@ -461,7 +557,8 @@
               automations,
               closedYears,
               manuallyOpenedYears,
-              driveScriptUrl,
+              deletedIds,
+              driveScriptUrl: driveScriptUrl || localStorage.getItem('sp_rieumes_drive_script_url') || '',
               updatedAt: nowIso
             }).then(() => {
               localStorage.setItem('sp_rieumes_pending_sync', 'false');
@@ -476,28 +573,49 @@
             setPendingOfflineSync(true);
           }
         }
-      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, driveScriptUrl, isAuthenticated]);
+      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, isAuthenticated]);
 
-      const forcePushToCloud = () => {
+      const forcePushToCloud = async (explicitDriveUrl) => {
         const nowIso = new Date().toISOString();
-        writeDataToCloud({
-          transactions,
-          accounts,
-          categories,
-          suppliers,
-          automations,
-          closedYears,
-          manuallyOpenedYears,
-          driveScriptUrl,
-          updatedAt: nowIso
-        }).then(() => {
+        const urlToSave = explicitDriveUrl !== undefined ? explicitDriveUrl : (driveScriptUrl || localStorage.getItem('sp_rieumes_drive_script_url') || '');
+        try {
+          let cloudSnap = null;
+          if (activeRestUrl.current) {
+            const r = await fetch(`${activeRestUrl.current}.json?t=${Date.now()}`, { cache: 'no-store' });
+            if (r.ok) cloudSnap = await r.json();
+          }
+          const mergedDeleted = Array.from(new Set([
+            ...(deletedIds || []).map(String),
+            ...((cloudSnap && cloudSnap.deletedIds) || []).map(String)
+          ])).slice(-1000);
+          const delSet = new Set(mergedDeleted);
+
+          const finalTx = cloudSnap ? smartMergeById(transactions, cloudSnap.transactions, delSet) : transactions;
+          const finalAcc = cloudSnap ? smartMergeById(accounts, cloudSnap.accounts, delSet, 'name') : accounts;
+          const finalCat = cloudSnap ? smartMergeById(categories, cloudSnap.categories, delSet, 'name') : categories;
+          const finalSup = cloudSnap ? smartMergeById(suppliers, cloudSnap.suppliers, delSet, 'name') : suppliers;
+          const finalAuto = cloudSnap ? smartMergeById(automations, cloudSnap.automations, delSet) : automations;
+
+          await writeDataToCloud({
+            transactions: finalTx,
+            accounts: finalAcc,
+            categories: finalCat,
+            suppliers: finalSup,
+            automations: finalAuto,
+            closedYears,
+            manuallyOpenedYears,
+            deletedIds: mergedDeleted,
+            driveScriptUrl: urlToSave || (cloudSnap && cloudSnap.driveScriptUrl) || '',
+            updatedAt: nowIso
+          });
+
           localStorage.setItem('sp_rieumes_updatedAt', nowIso);
           localStorage.setItem('sp_rieumes_pending_sync', 'false');
           setPendingOfflineSync(false);
           setCloudStatus('connected');
-        }).catch(() => {
+        } catch (err) {
           setCloudStatus('error');
-        });
+        }
       };
 
       const testDriveConnection = async () => {
@@ -512,7 +630,9 @@
           dummyBlob.name = "Test_Connexion_Tresorerie.txt";
           const res = await uploadFileToGoogleDrive(dummyBlob, clean, "TEST");
           setDriveScriptUrl(clean);
-          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier créé dans votre Drive (${res.name}).` });
+          localStorage.setItem('sp_rieumes_drive_script_url', clean);
+          forcePushToCloud(clean);
+          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier créé dans votre Drive (${res.name}) et adresse synchronisée sur tous vos appareils.` });
         } catch (err) {
           setDriveTestMsg({ type: 'error', text: err.message });
         }
@@ -592,10 +712,10 @@
         const cleanCat = (catName || '').trim();
         const cleanSup = (supName || '').trim();
         if (cleanCat && !categories.some(c => c.name.toLowerCase() === cleanCat.toLowerCase())) {
-          setCategories(prev => [...prev, { id: 'cat_' + Date.now(), name: cleanCat }]);
+          setCategories(prev => [...prev, { id: 'cat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), name: cleanCat, lastModified: Date.now() }]);
         }
         if (cleanSup && !suppliers.some(s => s.name.toLowerCase() === cleanSup.toLowerCase())) {
-          setSuppliers(prev => [...prev, { id: 'sup_' + Date.now(), name: cleanSup }]);
+          setSuppliers(prev => [...prev, { id: 'sup_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), name: cleanSup, lastModified: Date.now() }]);
         }
       };
 
@@ -696,35 +816,37 @@
           .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
       }, [transactions, currentAccountId, currentYear]);
 
-      // Actions
+      // Actions avec horodatage individuel (lastModified) pour la fusion intelligente
       const addTransaction = (tx) => {
         ensureCategoryAndSupplierExist(tx.category, tx.supplier);
-        setTransactions(prev => [{ ...tx, id: Date.now().toString() }, ...prev]);
+        const uniqueId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6);
+        setTransactions(prev => [{ ...tx, id: uniqueId, lastModified: Date.now() }, ...prev]);
         setIsAddModalOpen(false);
       };
 
       const handleEditTransaction = (updatedTx) => {
         ensureCategoryAndSupplierExist(updatedTx.category, updatedTx.supplier);
-        setTransactions(prev => prev.map(tx => tx.id === updatedTx.id ? updatedTx : tx));
+        setTransactions(prev => prev.map(tx => tx.id === updatedTx.id ? { ...updatedTx, lastModified: Date.now() } : tx));
         setEditModalTx(null);
       };
 
       const handleUpdateReceipt = (txId, newReceiptUrl, newReceiptName) => {
         setTransactions(prev => prev.map(tx => 
           tx.id === txId 
-            ? { ...tx, receiptUrl: newReceiptUrl || null, receiptName: newReceiptName || null } 
+            ? { ...tx, receiptUrl: newReceiptUrl || null, receiptName: newReceiptName || null, lastModified: Date.now() } 
             : tx
         ));
         setReceiptModalTx(null);
       };
 
       const deleteTransaction = (id) => {
+        setDeletedIds(prev => Array.from(new Set([...prev, String(id)])));
         setTransactions(prev => prev.filter(tx => tx.id !== id));
       };
 
       const toggleReconciled = (id) => {
         setTransactions(prev => prev.map(tx => 
-          tx.id === id ? { ...tx, reconciled: !tx.reconciled } : tx
+          tx.id === id ? { ...tx, reconciled: !tx.reconciled, lastModified: Date.now() } : tx
         ));
       };
 
@@ -769,8 +891,10 @@
         if (!inlineTx.amount || !inlineTx.description || !inlineTx.accountId) return;
         const chosenCategory = (inlineTx.category || '').trim() || (categories[0]?.name || 'Autre');
         ensureCategoryAndSupplierExist(chosenCategory, inlineTx.supplier);
+        const uniqueId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6);
         const newTx = {
-          id: Date.now().toString(),
+          id: uniqueId,
+          lastModified: Date.now(),
           type: inlineTx.type,
           amount: parseFloat(inlineTx.amount),
           description: inlineTx.description,
@@ -809,24 +933,27 @@
 
       const addAutomation = (automation) => {
         ensureCategoryAndSupplierExist(automation.category, automation.supplier);
-        setAutomations(prev => [...prev, { ...automation, id: Date.now().toString() }]);
+        const uniqueId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6);
+        setAutomations(prev => [...prev, { ...automation, id: uniqueId, lastModified: Date.now() }]);
         setIsAddAutomationOpen(false);
       };
 
       const deleteAutomation = (id) => {
+        setDeletedIds(prev => Array.from(new Set([...prev, String(id)])));
         setAutomations(prev => prev.filter(a => a.id !== id));
       };
 
       const addAccount = (e) => {
         e.preventDefault();
         if (newAccountName.trim()) {
-          setAccounts(prev => [...prev, { id: 'acc' + Date.now(), name: newAccountName.trim() }]);
+          setAccounts(prev => [...prev, { id: 'acc_' + Date.now(), name: newAccountName.trim(), lastModified: Date.now() }]);
           setNewAccountName('');
         }
       };
 
       const deleteAccount = (id) => {
         if (accounts.length > 1) {
+          setDeletedIds(prev => Array.from(new Set([...prev, String(id)])));
           setAccounts(prev => prev.filter(a => a.id !== id));
           if (currentAccountId === id) setCurrentAccountId('all');
         }
@@ -835,13 +962,14 @@
       const addCategory = (e) => {
         e.preventDefault();
         if (newCategoryName.trim()) {
-          setCategories(prev => [...prev, { id: 'cat' + Date.now(), name: newCategoryName.trim() }]);
+          setCategories(prev => [...prev, { id: 'cat_' + Date.now(), name: newCategoryName.trim(), lastModified: Date.now() }]);
           setNewCategoryName('');
         }
       };
 
       const deleteCategory = (id) => {
         if (categories.length > 1) {
+          setDeletedIds(prev => Array.from(new Set([...prev, String(id)])));
           setCategories(prev => prev.filter(c => c.id !== id));
         }
       };
@@ -849,12 +977,13 @@
       const addSupplier = (e) => {
         e.preventDefault();
         if (newSupplierName.trim()) {
-          setSuppliers(prev => [...prev, { id: 'sup' + Date.now(), name: newSupplierName.trim() }]);
+          setSuppliers(prev => [...prev, { id: 'sup_' + Date.now(), name: newSupplierName.trim(), lastModified: Date.now() }]);
           setNewSupplierName('');
         }
       };
 
       const deleteSupplier = (id) => {
+        setDeletedIds(prev => Array.from(new Set([...prev, String(id)])));
         setSuppliers(prev => prev.filter(s => s.id !== id));
       };
 
@@ -922,7 +1051,7 @@
       };
 
       const exportBackup = () => {
-        const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, driveScriptUrl, exportDate: new Date().toISOString() };
+        const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, exportDate: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -958,6 +1087,7 @@
           setAutomations(restoreData.automations || []);
           setClosedYears(restoreData.closedYears || []);
           setManuallyOpenedYears(restoreData.manuallyOpenedYears || []);
+          setDeletedIds(restoreData.deletedIds || []);
           if (restoreData.driveScriptUrl) {
             setDriveScriptUrl(restoreData.driveScriptUrl);
             setTempDriveScriptUrl(restoreData.driveScriptUrl);
@@ -1065,7 +1195,7 @@
                       cloudStatus === 'error' ? 'bg-red-500' : 'bg-yellow-400 animate-pulse'
                     }`}></span>
                     <span>
-                      {cloudStatus === 'connected' && !pendingOfflineSync ? 'Synchronisé (Firebase)' :
+                      {cloudStatus === 'connected' && !pendingOfflineSync ? 'Synchronisé (Fusion active)' :
                        pendingOfflineSync ? 'Sauvegardé sur PC (Attente réseau)' :
                        cloudStatus === 'offline' ? 'Hors-ligne (Sauvegarde PC active)' :
                        cloudStatus === 'error' ? 'Mode Local (Vérifier Règles)' :
@@ -1073,8 +1203,8 @@
                     </span>
                   </div>
                   {pendingOfflineSync && cloudStatus === 'connected' && (
-                    <button onClick={forcePushToCloud} className="mt-1.5 text-[11px] underline text-amber-300 hover:text-white">
-                      Synchroniser maintenant
+                    <button onClick={() => forcePushToCloud()} className="mt-1.5 text-[11px] underline text-amber-300 hover:text-white">
+                      Fusionner maintenant
                     </button>
                   )}
                 </div>
@@ -1732,7 +1862,7 @@
                               <FolderUp className="w-5 h-5 mr-2 text-blue-400"/> Envoi Automatique des Factures vers Google Drive
                             </h2>
                             <p className="text-xs text-gray-400 mt-0.5">
-                              Dépose automatiquement vos fichiers PC ou photos prises au téléphone dans votre dossier Google Drive et enregistre uniquement le lien dans Firebase.
+                              Dépose automatiquement vos fichiers PC ou photos prises au téléphone dans votre dossier Google Drive et synchronise l'adresse sur tous vos appareils.
                             </p>
                           </div>
                           <span className={`text-xs px-3 py-1 rounded-full font-semibold ${driveScriptUrl ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'}`}>
@@ -1749,12 +1879,15 @@
                           />
                           <button
                             onClick={() => {
-                              setDriveScriptUrl(tempDriveScriptUrl.trim());
-                              setDriveTestMsg({ type: 'info', text: "Lien enregistré ! Cliquez sur 'Tester l'envoi Drive' pour vérifier." });
+                              const cleaned = tempDriveScriptUrl.trim();
+                              setDriveScriptUrl(cleaned);
+                              localStorage.setItem('sp_rieumes_drive_script_url', cleaned);
+                              forcePushToCloud(cleaned);
+                              setDriveTestMsg({ type: 'success', text: "Lien enregistré et verrouillé dans Firebase pour tous vos appareils (PC et Téléphone) !" });
                             }}
                             className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl font-bold text-sm transition-colors"
                           >
-                            Enregistrer
+                            Enregistrer pour tous les appareils
                           </button>
                           <button
                             onClick={testDriveConnection}
@@ -1777,26 +1910,24 @@
                       {/* CONNEXION CLOUD FIREBASE */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-                          <h2 className="text-lg font-bold text-white flex items-center">
-                            <Database className="w-5 h-5 mr-2 text-emerald-400"/> Synchronisation en ligne (Firebase)
-                          </h2>
+                          <div>
+                            <h2 className="text-lg font-bold text-white flex items-center">
+                              <Database className="w-5 h-5 mr-2 text-emerald-400"/> Synchronisation en ligne (Firebase - Fusion Multi-Appareils)
+                            </h2>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              Les créations faites sur PC et sur Téléphone sont fusionnées ligne par ligne sans jamais s'écraser.
+                            </p>
+                          </div>
                           <span className={`text-xs px-3 py-1 rounded-full font-semibold ${
                             cloudStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
                             cloudStatus === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/30' :
                             'bg-amber-500/10 text-amber-400 border border-amber-500/30'
                           }`}>
-                            {cloudStatus === 'connected' ? '✓ Connecté en temps réel à Firebase' :
+                            {cloudStatus === 'connected' ? '✓ Connecté & Fusion intelligente active' :
                              cloudStatus === 'error' ? `⚠️ ${cloudErrorDetail || 'Vérifier les Règles Firebase'}` :
                              'Connexion / Attente synchronisation...'}
                           </span>
                         </div>
-                        {cloudStatus === 'error' && (
-                          <div className="mb-4 p-3.5 bg-red-950/40 border border-red-500/30 rounded-xl text-xs text-gray-200 space-y-1.5">
-                            <p className="font-bold text-red-400">Pourquoi Firebase refuse la connexion ?</p>
-                            <p>Dans votre console Firebase &gt; <strong>Realtime Database</strong> &gt; onglet <strong>Règles</strong>, assurez-vous d'avoir publié ces règles puis cliquez sur <strong>Publier</strong> :</p>
-                            <pre className="bg-gray-950 p-2.5 rounded-lg text-emerald-400 font-mono text-[11px] overflow-x-auto select-all">{`{\n  "rules": {\n    "coffre_fort": {\n      "vault_sp_51a9496ee31d9c64": {\n        ".read": true,\n        ".write": true\n      },\n      "vault_sp_51a9496e7121b924": {\n        ".read": true,\n        ".write": true\n      }\n    }\n  }\n}`}</pre>
-                          </div>
-                        )}
                         <div className="flex flex-col sm:flex-row gap-3">
                           <input 
                             type="url" 
@@ -1813,7 +1944,7 @@
                             }}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-colors"
                           >
-                            Connecter / Synchroniser
+                            Connecter / Fusionner
                           </button>
                         </div>
                       </div>
