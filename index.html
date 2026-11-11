@@ -23,6 +23,9 @@
     @media print {
       body { background: white !important; color: black !important; }
       .print\:hidden { display: none !important; }
+      .print\:block { display: block !important; }
+      .print-card { background: white !important; color: black !important; border-color: #d1d5db !important; }
+      .print-text-black { color: black !important; }
     }
   </style>
 </head>
@@ -48,6 +51,8 @@
     const Circle = ({ className }) => <Icon className={className}><circle cx="12" cy="12" r="10"/></Icon>;
     const ArrowUpRight = ({ className }) => <Icon className={className}><path d="M7 7h10v10"/><path d="M7 17 17 7"/></Icon>;
     const ArrowDownRight = ({ className }) => <Icon className={className}><path d="m7 7 10 10"/><path d="M17 7v10H7"/></Icon>;
+    const ArrowLeftRight = ({ className }) => <Icon className={className}><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></Icon>;
+    const Search = ({ className }) => <Icon className={className}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Icon>;
     const X = ({ className }) => <Icon className={className}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Icon>;
     const FileText = ({ className }) => <Icon className={className}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></Icon>;
     const CreditCard = ({ className }) => <Icon className={className}><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></Icon>;
@@ -68,11 +73,13 @@
     const Calendar = ({ className }) => <Icon className={className}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></Icon>;
     const ChevronDown = ({ className }) => <Icon className={className}><path d="m6 9 6 6 6-6"/></Icon>;
     const Users = ({ className }) => <Icon className={className}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
+    const AlertTriangle = ({ className }) => <Icon className={className}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></Icon>;
 
     // --- CONFIGURATION FIREBASE & GOOGLE DRIVE ---
     const DEFAULT_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.europe-west1.firebasedatabase.app";
     const FALLBACK_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.firebaseio.com";
     const DEFAULT_DRIVE_SCRIPT_URL = "";
+    const INTERNAL_TRANSFER_CATEGORY = "Virement interne";
 
     // --- SÉCURITÉ : VÉRIFICATION MASQUÉE DU MOT DE PASSE ---
     const EXPECTED_VAULT_KEY = "vault_sp_51a9496ee31d9c64";
@@ -129,7 +136,6 @@
       }
       if (!ext) ext = '.jpg';
 
-      // Nettoie le nom du tiers (sans accents ni caractères spéciaux)
       const rawTier = (tierOrFallback || '').trim() || 'tiers';
       const cleanTier = rawTier
         .normalize('NFD')
@@ -138,7 +144,6 @@
         .replace(/_+/g, '_')
         .replace(/^_|_$/g, '') || 'tiers';
 
-      // Génère un numéro unique lisible (ex: 20261111-4829)
       const now = new Date();
       const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
       const randPart = Math.floor(1000 + Math.random() * 9000);
@@ -147,12 +152,14 @@
       return `facture_${cleanTier}_${uniqueNum}${ext}`;
     };
 
-    // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE ---
-    const uploadFileToGoogleDrive = async (file, scriptUrl, tierOrFallback = '') => {
+    // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE (AVEC SOUS-DOSSIER PAR ANNÉE) ---
+    const uploadFileToGoogleDrive = async (file, scriptUrl, tierOrFallback = '', yearFolder = '') => {
       const cleanUrl = (scriptUrl || '').trim();
       if (!cleanUrl.startsWith('https://script.google.com/macros/s/') || !cleanUrl.endsWith('/exec')) {
         throw new Error("L'URL du script doit commencer par https://script.google.com/macros/s/... et finir par /exec");
       }
+
+      const targetYear = (yearFolder || '').toString().trim() || new Date().getFullYear().toString();
 
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -163,6 +170,7 @@
 
             const payload = JSON.stringify({
               fileName: finalFileName,
+              yearFolder: targetYear,
               mimeType: file.type || 'application/octet-stream',
               base64: base64Content
             });
@@ -185,7 +193,7 @@
             }
 
             if (resData && resData.status === 'success' && resData.url) {
-              resolve({ url: resData.url, name: resData.name || finalFileName });
+              resolve({ url: resData.url, name: resData.name || finalFileName, folder: resData.folder || targetYear });
             } else {
               reject(new Error(resData?.message || "Vérifiez l'ID du dossier Drive dans votre script Google."));
             }
@@ -251,7 +259,17 @@
       const [hasSelectedAccountOnce, setHasSelectedAccountOnce] = useState(false);
       const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-      // Chargement local par défaut (Sauvegarde Hors-Ligne instantanée)
+      // A. États pour la recherche et les filtres rapides dans le Livre de Comptes
+      const [searchQuery, setSearchQuery] = useState('');
+      const [quickFilter, setQuickFilter] = useState('all'); // 'all' | 'unpointed' | 'missing_receipt'
+
+      // F. Suivi de la dernière sauvegarde .json sur le PC
+      const [lastJsonBackupAt, setLastJsonBackupAt] = useState(() => {
+        return localStorage.getItem('sp_rieumes_last_json_backup') || null;
+      });
+      const [dismissBackupReminder, setDismissBackupReminder] = useState(false);
+
+      // Chargement local par défaut
       const [closedYears, setClosedYears] = useState(() => {
         const saved = localStorage.getItem('sp_rieumes_closedYears');
         return saved ? JSON.parse(saved) : [];
@@ -649,21 +667,22 @@
           setDriveTestMsg({ type: 'error', text: "Veuillez d'abord coller l'URL du script Google." });
           return;
         }
-        setDriveTestMsg({ type: 'info', text: "Test d'envoi d'un fichier test vers votre Google Drive..." });
+        setDriveTestMsg({ type: 'info', text: `Test d'envoi d'un fichier dans le sous-dossier ${currentYear} de votre Google Drive...` });
         try {
           const dummyBlob = new Blob(["Test de connexion Trésorerie Amicale SP Rieumes"], { type: 'text/plain' });
           dummyBlob.name = "test.txt";
-          const res = await uploadFileToGoogleDrive(dummyBlob, clean, "Amicale_SP_Rieumes");
+          const res = await uploadFileToGoogleDrive(dummyBlob, clean, "Amicale_SP_Rieumes", currentYear);
           setDriveScriptUrl(clean);
           localStorage.setItem('sp_rieumes_drive_script_url', clean);
           forcePushToCloud(clean);
-          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier nommé "${res.name}" créé dans votre Drive et adresse synchronisée.` });
+          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier "${res.name}" rangé dans le dossier "${res.folder || currentYear}" de votre Drive.` });
         } catch (err) {
           setDriveTestMsg({ type: 'error', text: err.message });
         }
       };
 
       const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+      const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
       const [isAddAutomationOpen, setIsAddAutomationOpen] = useState(false);
       const [editModalTx, setEditModalTx] = useState(null);
       const [receiptModalTx, setReceiptModalTx] = useState(null);
@@ -697,6 +716,15 @@
       const formatCurrency = (amount) => {
         return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
       };
+
+      // F. Calcul du rappel de sauvegarde (> 30 jours ou jamais faite alors qu'il y a des écritures)
+      const backupReminderInfo = useMemo(() => {
+        if (dismissBackupReminder || transactions.length === 0) return { show: false, days: 0 };
+        if (!lastJsonBackupAt) return { show: true, days: null };
+        const diffMs = Date.now() - new Date(lastJsonBackupAt).getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        return { show: diffDays >= 30, days: diffDays };
+      }, [lastJsonBackupAt, transactions.length, dismissBackupReminder]);
 
       const availableYears = useMemo(() => {
         const years = new Set(transactions.map(tx => tx.date.split('-')[0]));
@@ -735,7 +763,7 @@
       const ensureCategoryAndSupplierExist = (catName, supName) => {
         const cleanCat = (catName || '').trim();
         const cleanSup = (supName || '').trim();
-        if (cleanCat && !categories.some(c => c.name.toLowerCase() === cleanCat.toLowerCase())) {
+        if (cleanCat && cleanCat !== INTERNAL_TRANSFER_CATEGORY && !categories.some(c => c.name.toLowerCase() === cleanCat.toLowerCase())) {
           setCategories(prev => [...prev, { id: 'cat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), name: cleanCat, lastModified: Date.now() }]);
         }
         if (cleanSup && !suppliers.some(s => s.name.toLowerCase() === cleanSup.toLowerCase())) {
@@ -749,6 +777,36 @@
           .filter(tx => currentAccountId === 'all' || tx.accountId === currentAccountId)
           .sort((a, b) => new Date(b.date) - new Date(a.date));
       }, [transactions, currentYear, currentAccountId]);
+
+      // A. Compteurs et liste filtrée pour le Livre de Comptes (Recherche + Filtres rapides)
+      const unpointedCount = useMemo(() => {
+        return filteredTransactions.filter(tx => !tx.reconciled).length;
+      }, [filteredTransactions]);
+
+      const missingReceiptCount = useMemo(() => {
+        return filteredTransactions.filter(tx => tx.type === 'expense' && !tx.isInternalTransfer && tx.category !== INTERNAL_TRANSFER_CATEGORY && !tx.receiptUrl).length;
+      }, [filteredTransactions]);
+
+      const displayedTransactions = useMemo(() => {
+        return filteredTransactions.filter(tx => {
+          if (quickFilter === 'unpointed' && tx.reconciled) return false;
+          if (quickFilter === 'missing_receipt') {
+            const isRealExpense = tx.type === 'expense' && !tx.isInternalTransfer && tx.category !== INTERNAL_TRANSFER_CATEGORY;
+            if (!isRealExpense || tx.receiptUrl) return false;
+          }
+          if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase().trim();
+            const desc = (tx.description || '').toLowerCase();
+            const sup = (tx.supplier || '').toLowerCase();
+            const cat = (tx.category || '').toLowerCase();
+            const chk = (tx.checkNumber || '').toLowerCase();
+            const amt = (tx.amount !== undefined ? tx.amount.toString() : '');
+            const dateFr = new Date(tx.date).toLocaleDateString('fr-FR');
+            return desc.includes(q) || sup.includes(q) || cat.includes(q) || chk.includes(q) || amt.includes(q) || dateFr.includes(q);
+          }
+          return true;
+        });
+      }, [filteredTransactions, quickFilter, searchQuery]);
 
       const isCurrentYearClosed = closedYears.includes(currentYear);
 
@@ -784,6 +842,24 @@
         return balancesByAccount;
       }, [transactions, accounts]);
 
+      // G. Soldes des comptes arrêtés au 31/12 de l'exercice sélectionné (pour le rapport d'AG)
+      const endOfYearAccountBalances = useMemo(() => {
+        const res = {};
+        accounts.forEach(acc => {
+          res[acc.id] = { pointed: 0, theoretical: 0 };
+        });
+        const cutoff = `${currentYear}-12-31`;
+        transactions.forEach(tx => {
+          if (tx.date <= cutoff && res[tx.accountId]) {
+            const mod = tx.type === 'income' ? 1 : -1;
+            if (tx.reconciled) res[tx.accountId].pointed += tx.amount * mod;
+            res[tx.accountId].theoretical += tx.amount * mod;
+          }
+        });
+        return res;
+      }, [transactions, accounts, currentYear]);
+
+      // B. Exclusion des virements internes dans les totaux de Recettes / Dépenses du Bilan Annuel
       const categorySummary = useMemo(() => {
         const summary = {};
         categories.forEach(cat => {
@@ -791,6 +867,7 @@
         });
         
         filteredTransactions.forEach(tx => {
+          if (tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY) return;
           const catName = tx.category || 'Non catégorisé';
           if (!summary[catName]) {
             summary[catName] = { income: 0, expense: 0, total: 0 };
@@ -813,6 +890,7 @@
         });
         
         filteredTransactions.forEach(tx => {
+          if (tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY) return;
           const supName = (tx.supplier || '').trim() || 'Non renseigné';
           if (!summary[supName]) {
             summary[supName] = { income: 0, expense: 0, total: 0 };
@@ -827,6 +905,12 @@
         });
         return summary;
       }, [filteredTransactions, suppliers]);
+
+      const netInternalTransfersForYear = useMemo(() => {
+        return filteredTransactions
+          .filter(tx => tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY)
+          .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
+      }, [filteredTransactions]);
 
       const activeSummary = balanceGroupBy === 'category' ? categorySummary : supplierSummary;
 
@@ -845,6 +929,56 @@
         const uniqueId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6);
         setTransactions(prev => [{ ...tx, id: uniqueId, lastModified: Date.now() }, ...prev]);
         setIsAddModalOpen(false);
+      };
+
+      // B. Fonction d'ajout d'un Virement Interne (crée les 2 écritures simultanément)
+      const addInternalTransfer = ({ fromAccountId, toAccountId, amount, date, description, paymentMethod, reconciled }) => {
+        const fromAcc = accounts.find(a => a.id === fromAccountId)?.name || 'Compte source';
+        const toAcc = accounts.find(a => a.id === toAccountId)?.name || 'Compte destination';
+        const baseId = Date.now().toString();
+        const now = Date.now();
+        const cleanDesc = (description || '').trim();
+
+        const txOut = {
+          id: `${baseId}_out`,
+          transferPairId: baseId,
+          isInternalTransfer: true,
+          lastModified: now,
+          type: 'expense',
+          amount: parseFloat(amount),
+          description: cleanDesc ? `${cleanDesc} (Vers ${toAcc})` : `Virement interne vers ${toAcc}`,
+          supplier: toAcc,
+          category: INTERNAL_TRANSFER_CATEGORY,
+          date,
+          accountId: fromAccountId,
+          paymentMethod: paymentMethod || 'Virement',
+          checkNumber: null,
+          receiptUrl: null,
+          receiptName: null,
+          reconciled: !!reconciled
+        };
+
+        const txIn = {
+          id: `${baseId}_in`,
+          transferPairId: baseId,
+          isInternalTransfer: true,
+          lastModified: now,
+          type: 'income',
+          amount: parseFloat(amount),
+          description: cleanDesc ? `${cleanDesc} (Depuis ${fromAcc})` : `Virement interne depuis ${fromAcc}`,
+          supplier: fromAcc,
+          category: INTERNAL_TRANSFER_CATEGORY,
+          date,
+          accountId: toAccountId,
+          paymentMethod: paymentMethod || 'Virement',
+          checkNumber: null,
+          receiptUrl: null,
+          receiptName: null,
+          reconciled: !!reconciled
+        };
+
+        setTransactions(prev => [txIn, txOut, ...prev]);
+        setIsTransferModalOpen(false);
       };
 
       const handleEditTransaction = (updatedTx) => {
@@ -877,10 +1011,11 @@
         const file = e.target.files[0];
         if (!file) return;
         const tierLabel = (inlineTx.supplier || '').trim() || (inlineTx.description || '').trim() || 'tiers';
+        const txYear = (inlineTx.date || '').split('-')[0] || currentYear;
         if (driveScriptUrl) {
           setInlineTx(prev => ({ ...prev, uploadingInlineDrive: true }));
           try {
-            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
+            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel, txYear);
             setInlineTx(prev => ({
               ...prev,
               receiptUrl: res.url,
@@ -1043,7 +1178,10 @@
         
         csvContent += `\nTOTAL DES MOUVEMENTS${separator}${totalInc.toString().replace('.', ',')}${separator}${totalExp.toString().replace('.', ',')}${separator}${totalSolde.toString().replace('.', ',')}\n`;
         csvContent += `Report à nouveau${separator}${separator}${separator}${reportANouveau.toString().replace('.', ',')}\n`;
-        csvContent += `SOLDE FINAL (Avec report)${separator}${separator}${separator}${(reportANouveau + totalSolde).toString().replace('.', ',')}\n\n\n`;
+        if (netInternalTransfersForYear !== 0) {
+          csvContent += `Mouvements nets de virements internes${separator}${separator}${separator}${netInternalTransfersForYear.toString().replace('.', ',')}\n`;
+        }
+        csvContent += `SOLDE FINAL (Avec report)${separator}${separator}${separator}${(reportANouveau + totalSolde + netInternalTransfersForYear).toString().replace('.', ',')}\n\n\n`;
         csvContent += `DÉTAIL DES OPÉRATIONS\n`;
         const headers = ['Date', 'Compte', 'Libellé', 'Fournisseur / Tiers', 'Catégorie', 'Mode', 'N° Chèque', 'Type', 'Montant', 'Pointé', 'Justificatif'];
         csvContent += headers.join(separator) + '\n';
@@ -1074,15 +1212,19 @@
       };
 
       const exportBackup = () => {
-        const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, exportDate: new Date().toISOString() };
+        const nowIso = new Date().toISOString();
+        const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, exportDate: nowIso };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `sauvegarde_tresorerie_${new Date().toISOString().split('T')[0]}.json`;
+        link.download = `sauvegarde_tresorerie_${nowIso.split('T')[0]}.json`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        localStorage.setItem('sp_rieumes_last_json_backup', nowIso);
+        setLastJsonBackupAt(nowIso);
+        setDismissBackupReminder(true);
       };
 
       const handleFileUpload = (e) => {
@@ -1302,14 +1444,61 @@
                 </div>
 
                 {!isCurrentYearClosed && (
-                  <button onClick={() => setIsAddModalOpen(true)} className="w-full sm:w-auto flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl font-medium transition-colors shadow-lg shadow-red-600/20">
-                    <Plus className="w-5 h-5" /><span>Nouvelle Opération</span>
-                  </button>
+                  <div className="flex flex-wrap sm:flex-nowrap gap-2.5 w-full sm:w-auto">
+                    <button 
+                      onClick={() => setIsTransferModalOpen(true)} 
+                      className="flex-1 sm:flex-initial flex items-center justify-center space-x-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-indigo-300 hover:text-white px-4 py-2.5 rounded-xl font-medium transition-colors"
+                      title="Transférer une somme d'un compte à un autre"
+                    >
+                      <ArrowLeftRight className="w-4 h-4" /><span>Virement interne</span>
+                    </button>
+                    <button 
+                      onClick={() => setIsAddModalOpen(true)} 
+                      className="flex-1 sm:flex-initial flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl font-medium transition-colors shadow-lg shadow-red-600/20"
+                    >
+                      <Plus className="w-5 h-5" /><span>Nouvelle Opération</span>
+                    </button>
+                  </div>
                 )}
               </header>
 
               <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
                 <div className="max-w-[1600px] w-full mx-auto">
+
+                  {/* F. BANDEAU DISCRET DE RAPPEL DE SAUVEGARDE .JSON (> 30 JOURS) */}
+                  {backupReminderInfo.show && (
+                    <div className="mb-6 bg-blue-950/40 border border-blue-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 print:hidden">
+                      <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 text-blue-400 p-2.5 rounded-xl flex-shrink-0">
+                          <Download className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-white">Rappel de sécurité mensuel (.json)</h4>
+                          <p className="text-xs text-gray-300 mt-0.5">
+                            {backupReminderInfo.days === null
+                              ? "Vous n'avez pas encore téléchargé de copie de secours (.json) sur cet ordinateur."
+                              : `Votre dernière copie de sauvegarde sur ordinateur date d'il y a ${backupReminderInfo.days} jours.`}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                        <button
+                          onClick={exportBackup}
+                          className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-colors flex items-center space-x-1.5 shadow"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>Télécharger la copie du mois (.json)</span>
+                        </button>
+                        <button
+                          onClick={() => setDismissBackupReminder(true)}
+                          title="Me le rappeler plus tard"
+                          className="text-gray-400 hover:text-white p-2"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   
                   {/* ONGLET 1 : TABLEAU DE BORD */}
                   {activeTab === 'dashboard' && (
@@ -1388,7 +1577,7 @@
                             </div>
                             <div>
                               <span className="text-xs uppercase tracking-wider text-gray-400 font-semibold">Compte en cours de traitement</span>
-                              <div className="flex items-center space-x-3 mt-0.5">
+                              <div className="flex flex-wrap items-center gap-2 mt-0.5">
                                 <h2 className="text-2xl font-extrabold text-white">{currentAccountName}</h2>
                                 <button 
                                   onClick={() => setIsAccountPickerOpen(true)}
@@ -1424,11 +1613,57 @@
                         </div>
                       </div>
 
-                      {/* TABLEAU DES ÉCRITURES */}
+                      {/* TABLEAU DES ÉCRITURES AVEC RECHERCHE & FILTRES RAPIDES (A) */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-sm overflow-visible">
-                        <div className="p-5 border-b border-gray-800 flex justify-between items-center">
-                          <h3 className="text-lg font-bold text-white">Écritures de l'exercice {currentYear}</h3>
-                          <span className="text-xs text-gray-400">{filteredTransactions.length} opération(s)</span>
+                        <div className="p-5 border-b border-gray-800 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                          <div className="flex items-center space-x-3">
+                            <h3 className="text-lg font-bold text-white">Écritures de l'exercice {currentYear}</h3>
+                            <span className="text-xs bg-gray-800 text-gray-300 px-2.5 py-1 rounded-full border border-gray-700">
+                              {displayedTransactions.length} / {filteredTransactions.length} opération(s)
+                            </span>
+                          </div>
+
+                          {/* A. BARRE DE RECHERCHE & FILTRES RAPIDES */}
+                          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto print:hidden">
+                            <div className="relative flex-1 sm:w-64">
+                              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Chercher libellé, tiers, chèque, montant..."
+                                className="w-full bg-gray-950 border border-gray-700 focus:border-red-500 rounded-xl pl-9 pr-8 py-2 text-xs text-white outline-none"
+                              />
+                              {searchQuery && (
+                                <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex items-center bg-gray-950 p-1 rounded-xl border border-gray-800">
+                              <button
+                                onClick={() => setQuickFilter('all')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${quickFilter === 'all' ? 'bg-gray-800 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                              >
+                                Tout
+                              </button>
+                              <button
+                                onClick={() => setQuickFilter(quickFilter === 'unpointed' ? 'all' : 'unpointed')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center space-x-1.5 ${quickFilter === 'unpointed' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40' : 'text-gray-400 hover:text-white'}`}
+                              >
+                                <Circle className="w-3 h-3" />
+                                <span>Non pointés ({unpointedCount})</span>
+                              </button>
+                              <button
+                                onClick={() => setQuickFilter(quickFilter === 'missing_receipt' ? 'all' : 'missing_receipt')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center space-x-1.5 ${quickFilter === 'missing_receipt' ? 'bg-red-500/20 text-red-300 border border-red-500/40' : 'text-gray-400 hover:text-white'}`}
+                              >
+                                <Paperclip className="w-3 h-3" />
+                                <span>Sans facture ({missingReceiptCount})</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
                         
                         <div className="overflow-x-auto pb-28">
@@ -1517,7 +1752,7 @@
                                     {inlineTx.showReceiptInput && (
                                       <div className="absolute right-0 top-full mt-1 z-[250] bg-gray-900 border border-gray-700 p-3.5 rounded-xl shadow-2xl w-80 text-left space-y-2.5">
                                         <div className="flex items-center justify-between">
-                                          <span className="text-xs font-bold text-white">Joindre une facture</span>
+                                          <span className="text-xs font-bold text-white">Joindre une facture (Dossier {(inlineTx.date || '').split('-')[0] || currentYear})</span>
                                           <button type="button" onClick={() => setInlineTx({...inlineTx, showReceiptInput: false})} className="text-gray-400 hover:text-white"><X className="w-4 h-4"/></button>
                                         </div>
 
@@ -1572,73 +1807,84 @@
                                   </td>
                                 </tr>
                               )}
-                              {filteredTransactions.length === 0 ? (
+                              {displayedTransactions.length === 0 ? (
                                 <tr>
-                                  <td colSpan="10" className="px-4 py-8 text-center text-gray-500">Aucune écriture pour ce compte sur l'année {currentYear}.</td>
+                                  <td colSpan="10" className="px-4 py-8 text-center text-gray-500">
+                                    {searchQuery || quickFilter !== 'all'
+                                      ? "Aucune écriture ne correspond à votre filtre ou recherche."
+                                      : `Aucune écriture pour ce compte sur l'année ${currentYear}.`}
+                                  </td>
                                 </tr>
                               ) : (
-                                filteredTransactions.map((tx) => (
-                                  <tr key={tx.id} className="bg-gray-900 border-b border-gray-800 hover:bg-gray-800/50">
-                                    <td className="px-3 py-3 whitespace-nowrap">{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
-                                    <td className="px-3 py-3 whitespace-nowrap">{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
-                                    <td className="px-3 py-3 font-medium text-gray-200">{tx.description}</td>
-                                    <td className="px-3 py-3 whitespace-nowrap">
-                                      {tx.supplier ? (
-                                        <span className="bg-blue-500/10 text-blue-300 text-xs px-2.5 py-1 rounded-full border border-blue-500/20">{tx.supplier}</span>
-                                      ) : (
-                                        <span className="text-gray-600 text-xs">-</span>
-                                      )}
-                                    </td>
-                                    <td className="px-3 py-3 whitespace-nowrap"><span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-full border border-gray-700">{tx.category}</span></td>
-                                    <td className="px-3 py-3 text-sm text-gray-300 whitespace-nowrap">
-                                      <span className="block font-medium">{tx.paymentMethod || '-'}</span>
-                                      {tx.paymentMethod === 'Chèque' && tx.checkNumber && <span className="block text-xs text-gray-500">N° {tx.checkNumber}</span>}
-                                    </td>
-                                    <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
-                                      {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
-                                    </td>
-                                    <td className="px-3 py-3 text-center">
-                                      {isCurrentYearClosed ? (
-                                        <div className="flex justify-center">{tx.reconciled ? <CheckCircle className="w-6 h-6 text-gray-500" /> : <Circle className="w-6 h-6 text-gray-600" />}</div>
-                                      ) : (
-                                        <button onClick={() => toggleReconciled(tx.id)} className={`print:hidden ${tx.reconciled ? 'text-emerald-500' : 'text-gray-600'}`}>
-                                          {tx.reconciled ? <CheckCircle className="w-6 h-6 mx-auto" /> : <Circle className="w-6 h-6 mx-auto" />}
-                                        </button>
-                                      )}
-                                    </td>
-                                    <td className="px-3 py-3 text-center print:hidden">
-                                      {tx.receiptUrl ? (
-                                        <button
-                                          onClick={() => setReceiptModalTx(tx)}
-                                          title={tx.receiptName || "Voir ou modifier le justificatif lié"}
-                                          className="inline-flex items-center justify-center p-1.5 rounded-lg bg-blue-500/15 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 transition-colors"
-                                        >
-                                          <Paperclip className="w-4 h-4" />
-                                        </button>
-                                      ) : (
-                                        !isCurrentYearClosed ? (
+                                displayedTransactions.map((tx) => {
+                                  const isTransfer = tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY;
+                                  return (
+                                    <tr key={tx.id} className="bg-gray-900 border-b border-gray-800 hover:bg-gray-800/50">
+                                      <td className="px-3 py-3 whitespace-nowrap">{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
+                                      <td className="px-3 py-3 whitespace-nowrap">{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
+                                      <td className="px-3 py-3 font-medium text-gray-200">{tx.description}</td>
+                                      <td className="px-3 py-3 whitespace-nowrap">
+                                        {tx.supplier ? (
+                                          <span className="bg-blue-500/10 text-blue-300 text-xs px-2.5 py-1 rounded-full border border-blue-500/20">{tx.supplier}</span>
+                                        ) : (
+                                          <span className="text-gray-600 text-xs">-</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-3 whitespace-nowrap">
+                                        <span className={`text-xs px-2.5 py-1 rounded-full border ${isTransfer ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' : 'bg-gray-800 text-gray-300 border-gray-700'}`}>
+                                          {tx.category}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-3 text-sm text-gray-300 whitespace-nowrap">
+                                        <span className="block font-medium">{tx.paymentMethod || '-'}</span>
+                                        {tx.paymentMethod === 'Chèque' && tx.checkNumber && <span className="block text-xs text-gray-500">N° {tx.checkNumber}</span>}
+                                      </td>
+                                      <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
+                                        {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+                                      </td>
+                                      <td className="px-3 py-3 text-center">
+                                        {isCurrentYearClosed ? (
+                                          <div className="flex justify-center">{tx.reconciled ? <CheckCircle className="w-6 h-6 text-gray-500" /> : <Circle className="w-6 h-6 text-gray-600" />}</div>
+                                        ) : (
+                                          <button onClick={() => toggleReconciled(tx.id)} className={`print:hidden ${tx.reconciled ? 'text-emerald-500' : 'text-gray-600'}`}>
+                                            {tx.reconciled ? <CheckCircle className="w-6 h-6 mx-auto" /> : <Circle className="w-6 h-6 mx-auto" />}
+                                          </button>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-3 text-center print:hidden">
+                                        {tx.receiptUrl ? (
                                           <button
                                             onClick={() => setReceiptModalTx(tx)}
-                                            title="Scanner ou déposer une facture sur Google Drive"
-                                            className="inline-flex items-center justify-center p-1.5 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+                                            title={tx.receiptName || "Voir ou modifier le justificatif lié"}
+                                            className="inline-flex items-center justify-center p-1.5 rounded-lg bg-blue-500/15 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 transition-colors"
                                           >
                                             <Paperclip className="w-4 h-4" />
                                           </button>
                                         ) : (
-                                          <span className="text-gray-600">-</span>
-                                        )
-                                      )}
-                                    </td>
-                                    <td className="px-3 py-3 text-center print:hidden">
-                                      {!isCurrentYearClosed && (
-                                        <div className="flex justify-center space-x-2">
-                                          <button onClick={() => setEditModalTx(tx)} className="text-gray-400 hover:text-white" title="Modifier l'opération"><Pencil className="w-4 h-4"/></button>
-                                          <button onClick={() => deleteTransaction(tx.id)} className="text-gray-400 hover:text-red-500" title="Supprimer l'opération"><Trash2 className="w-4 h-4"/></button>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))
+                                          !isCurrentYearClosed ? (
+                                            <button
+                                              onClick={() => setReceiptModalTx(tx)}
+                                              title="Scanner ou déposer une facture sur Google Drive"
+                                              className="inline-flex items-center justify-center p-1.5 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+                                            >
+                                              <Paperclip className="w-4 h-4" />
+                                            </button>
+                                          ) : (
+                                            <span className="text-gray-600">-</span>
+                                          )
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-3 text-center print:hidden">
+                                        {!isCurrentYearClosed && (
+                                          <div className="flex justify-center space-x-2">
+                                            <button onClick={() => setEditModalTx(tx)} className="text-gray-400 hover:text-white" title="Modifier l'opération"><Pencil className="w-4 h-4"/></button>
+                                            <button onClick={() => deleteTransaction(tx.id)} className="text-gray-400 hover:text-red-500" title="Supprimer l'opération"><Trash2 className="w-4 h-4"/></button>
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
                               )}
                             </tbody>
                           </table>
@@ -1647,17 +1893,31 @@
                     </div>
                   )}
 
-                  {/* ONGLET 3 : BILAN ANNUEL */}
+                  {/* ONGLET 3 : BILAN ANNUEL & RAPPORT D'ASSEMBLÉE GÉNÉRALE (G) */}
                   {activeTab === 'balance' && (
-                    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-6">
-                      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-6 print-card">
+                      {/* EN-TÊTE OFFICIEL POUR L'IMPRESSION D'ASSEMBLÉE GÉNÉRALE */}
+                      <div className="hidden print:block border-b-2 border-black pb-4 mb-6">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h1 className="text-2xl font-extrabold uppercase tracking-wide text-black">Amicale des Sapeurs-Pompiers de Rieumes</h1>
+                            <p className="text-sm font-semibold text-gray-700 mt-1">Rapport Financier d'Assemblée Générale — Exercice {currentYear}</p>
+                            <p className="text-xs text-gray-600">Périmètre : {currentAccountName}</p>
+                          </div>
+                          <div className="text-right text-xs text-gray-600">
+                            <p>Édité le {new Date().toLocaleDateString('fr-FR')}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 print:hidden">
                         <div>
                           <h2 className="text-xl font-bold text-white">Bilan Financier {currentYear} ({currentAccountName})</h2>
                           <p className="text-xs text-gray-400 mt-1">
-                            Regroupement actuel : <strong className="text-gray-200">{balanceGroupBy === 'category' ? 'Par Catégorie' : 'Par Fournisseur / Tiers'}</strong>
+                            Regroupement actuel : <strong className="text-gray-200">{balanceGroupBy === 'category' ? 'Par Catégorie' : 'Par Fournisseur / Tiers'}</strong> (Hors virements internes)
                           </p>
                         </div>
-                        <div className="flex flex-wrap gap-2 print:hidden">
+                        <div className="flex flex-wrap gap-2">
                           <div className="bg-gray-950 p-1 rounded-xl border border-gray-800 flex">
                             <button 
                               onClick={() => { setBalanceGroupBy('category'); setBalanceItemFilter('all'); }} 
@@ -1694,20 +1954,20 @@
                           <button onClick={exportCSV} className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-medium">
                             <Download className="w-4 h-4"/><span>Export CSV / Sheets</span>
                           </button>
-                          <button onClick={() => window.print()} className="flex items-center space-x-1.5 bg-gray-800 hover:bg-gray-700 text-white px-3 py-1.5 rounded-xl text-xs font-medium">
-                            <Printer className="w-4 h-4"/><span>Imprimer</span>
+                          <button onClick={() => window.print()} className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow">
+                            <Printer className="w-4 h-4"/><span>Imprimer Rapport AG</span>
                           </button>
                         </div>
                       </div>
 
-                      <div className="bg-gray-950 p-4 rounded-xl border border-gray-800 flex justify-between items-center">
-                        <span className="text-gray-300 font-medium">Report à nouveau (Solde au 1er Janvier {currentYear})</span>
-                        <span className={`text-lg font-bold ${reportANouveau >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{formatCurrency(reportANouveau)}</span>
+                      <div className="bg-gray-950 p-4 rounded-xl border border-gray-800 flex justify-between items-center print-card">
+                        <span className="text-gray-300 font-medium print-text-black">Report à nouveau (Solde au 1er Janvier {currentYear})</span>
+                        <span className={`text-lg font-bold ${reportANouveau >= 0 ? 'text-emerald-500' : 'text-red-500'} print-text-black`}>{formatCurrency(reportANouveau)}</span>
                       </div>
 
                       {balanceViewMode === 'global' ? (
-                        <table className="w-full text-sm text-left text-gray-300">
-                          <thead className="bg-gray-950 border-b border-gray-800">
+                        <table className="w-full text-sm text-left text-gray-300 print-text-black">
+                          <thead className="bg-gray-950 border-b border-gray-800 print-card">
                             <tr>
                               <th className="px-6 py-4">{balanceGroupBy === 'category' ? 'Catégorie' : 'Fournisseur / Tiers'}</th>
                               <th className="px-6 py-4 text-right">Recettes</th>
@@ -1723,23 +1983,29 @@
                             ) : (
                               filteredSummaryEntries.map(([itemKey, data]) => (
                                 <tr key={itemKey} className="border-b border-gray-800 hover:bg-gray-800/30">
-                                  <td className="px-6 py-4 font-medium text-white">{itemKey}</td>
-                                  <td className="px-6 py-4 text-right text-emerald-500">{data.income > 0 ? formatCurrency(data.income) : '-'}</td>
-                                  <td className="px-6 py-4 text-right text-red-500">{data.expense > 0 ? formatCurrency(data.expense) : '-'}</td>
-                                  <td className={`px-6 py-4 text-right font-bold ${data.total >= 0 ? 'text-white' : 'text-red-400'}`}>{formatCurrency(data.total)}</td>
+                                  <td className="px-6 py-3.5 font-medium text-white print-text-black">{itemKey}</td>
+                                  <td className="px-6 py-3.5 text-right text-emerald-500 print-text-black">{data.income > 0 ? formatCurrency(data.income) : '-'}</td>
+                                  <td className="px-6 py-3.5 text-right text-red-500 print-text-black">{data.expense > 0 ? formatCurrency(data.expense) : '-'}</td>
+                                  <td className={`px-6 py-3.5 text-right font-bold ${data.total >= 0 ? 'text-white' : 'text-red-400'} print-text-black`}>{formatCurrency(data.total)}</td>
                                 </tr>
                               ))
                             )}
-                            <tr className="bg-gray-950 font-bold text-white border-t-2 border-gray-700">
-                              <td className="px-6 py-4">TOTAL DES MOUVEMENTS {currentYear}</td>
-                              <td className="px-6 py-4 text-right text-emerald-400">{formatCurrency(sumIncome)}</td>
-                              <td className="px-6 py-4 text-right text-red-400">{formatCurrency(sumExpense)}</td>
+                            <tr className="bg-gray-950 font-bold text-white border-t-2 border-gray-700 print-card print-text-black">
+                              <td className="px-6 py-4">TOTAL DES MOUVEMENTS {currentYear} (Hors virements internes)</td>
+                              <td className="px-6 py-4 text-right text-emerald-400 print-text-black">{formatCurrency(sumIncome)}</td>
+                              <td className="px-6 py-4 text-right text-red-400 print-text-black">{formatCurrency(sumExpense)}</td>
                               <td className="px-6 py-4 text-right">{formatCurrency(sumTotal)}</td>
                             </tr>
+                            {balanceItemFilter === 'all' && netInternalTransfersForYear !== 0 && (
+                              <tr className="bg-indigo-950/20 text-indigo-300 border-t border-indigo-500/30 print-card print-text-black">
+                                <td className="px-6 py-3" colSpan="3">Mouvements nets de virements internes sur ce compte</td>
+                                <td className="px-6 py-3 text-right font-bold">{netInternalTransfersForYear > 0 ? '+' : ''}{formatCurrency(netInternalTransfersForYear)}</td>
+                              </tr>
+                            )}
                             {balanceItemFilter === 'all' && (
-                              <tr className="bg-red-950/20 font-extrabold text-white border-t border-red-500/30">
-                                <td className="px-6 py-4" colSpan="3">SOLDE FINAL (Avec Report à nouveau)</td>
-                                <td className="px-6 py-4 text-right text-lg">{formatCurrency(reportANouveau + sumTotal)}</td>
+                              <tr className="bg-red-950/20 font-extrabold text-white border-t border-red-500/30 print-card print-text-black">
+                                <td className="px-6 py-4" colSpan="3">SOLDE FINAL AU 31/12/{currentYear} (Avec Report à nouveau)</td>
+                                <td className="px-6 py-4 text-right text-lg">{formatCurrency(reportANouveau + sumTotal + netInternalTransfersForYear)}</td>
                               </tr>
                             )}
                           </tbody>
@@ -1748,36 +2014,38 @@
                         <div className="space-y-4">
                           {filteredSummaryEntries.map(([itemKey, data]) => {
                             const itemTxs = filteredTransactions.filter(t => 
-                              balanceGroupBy === 'category' 
-                                ? (t.category || 'Non catégorisé') === itemKey
-                                : ((t.supplier || '').trim() || 'Non renseigné') === itemKey
+                              !t.isInternalTransfer && t.category !== INTERNAL_TRANSFER_CATEGORY && (
+                                balanceGroupBy === 'category' 
+                                  ? (t.category || 'Non catégorisé') === itemKey
+                                  : ((t.supplier || '').trim() || 'Non renseigné') === itemKey
+                              )
                             );
                             if (itemTxs.length === 0) return null;
                             return (
-                              <div key={itemKey} className="border border-gray-800 rounded-xl overflow-hidden">
-                                <div className="bg-gray-950 px-4 py-3 flex justify-between items-center border-b border-gray-800">
-                                  <span className="font-bold text-white">{itemKey}</span>
-                                  <span className={`font-bold ${data.total >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(data.total)}</span>
+                              <div key={itemKey} className="border border-gray-800 rounded-xl overflow-hidden print-card">
+                                <div className="bg-gray-950 px-4 py-3 flex justify-between items-center border-b border-gray-800 print-card">
+                                  <span className="font-bold text-white print-text-black">{itemKey}</span>
+                                  <span className={`font-bold ${data.total >= 0 ? 'text-emerald-400' : 'text-red-400'} print-text-black`}>{formatCurrency(data.total)}</span>
                                 </div>
                                 <div className="divide-y divide-gray-800/60">
                                   {itemTxs.map(tx => (
                                     <div key={tx.id} className="px-4 py-2.5 flex justify-between items-center text-xs">
                                       <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-gray-400">{new Date(tx.date).toLocaleDateString('fr-FR')}</span>
-                                        <span className="text-gray-200 font-medium">{tx.description}</span>
+                                        <span className="text-gray-400 print-text-black">{new Date(tx.date).toLocaleDateString('fr-FR')}</span>
+                                        <span className="text-gray-200 font-medium print-text-black">{tx.description}</span>
                                         {balanceGroupBy === 'category' && tx.supplier && (
-                                          <span className="bg-blue-500/10 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/20">{tx.supplier}</span>
+                                          <span className="bg-blue-500/10 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/20 print-text-black">{tx.supplier}</span>
                                         )}
                                         {balanceGroupBy === 'supplier' && tx.category && (
-                                          <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-full border border-gray-700">{tx.category}</span>
+                                          <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-full border border-gray-700 print-text-black">{tx.category}</span>
                                         )}
                                         {tx.receiptUrl && (
-                                          <button onClick={() => setReceiptModalTx(tx)} className="text-blue-400 hover:underline inline-flex items-center">
+                                          <button onClick={() => setReceiptModalTx(tx)} className="text-blue-400 hover:underline inline-flex items-center print:hidden">
                                             <Paperclip className="w-3 h-3 mr-1"/>Justificatif
                                           </button>
                                         )}
                                       </div>
-                                      <span className={`font-bold ${tx.type === 'income' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      <span className={`font-bold ${tx.type === 'income' ? 'text-emerald-400' : 'text-red-400'} print-text-black`}>
                                         {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
                                       </span>
                                     </div>
@@ -1788,6 +2056,55 @@
                           })}
                         </div>
                       )}
+
+                      {/* G. SECTION RAPPORT D'ASSEMBLÉE GÉNÉRALE : ÉTAT DES COMPTES & SIGNATURES OFFICIELLES */}
+                      <div className="pt-6 border-t border-gray-800 space-y-6 print-card">
+                        <div>
+                          <h3 className="text-base font-bold text-white mb-3 print-text-black">
+                            Situation de la trésorerie par compte au 31/12/{currentYear}
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            {accounts.map(acc => {
+                              const eoy = endOfYearAccountBalances[acc.id] || { pointed: 0, theoretical: 0 };
+                              return (
+                                <div key={acc.id} className="bg-gray-950 border border-gray-800 rounded-xl p-4 print-card">
+                                  <span className="text-xs font-bold uppercase text-gray-400 block print-text-black">{acc.name}</span>
+                                  <div className="flex justify-between items-baseline mt-2">
+                                    <span className="text-xs text-gray-400 print-text-black">Solde théorique :</span>
+                                    <span className="text-base font-extrabold text-white print-text-black">{formatCurrency(eoy.theoretical)}</span>
+                                  </div>
+                                  <div className="flex justify-between items-baseline mt-1">
+                                    <span className="text-[11px] text-gray-500 print-text-black">Solde pointé :</span>
+                                    <span className="text-xs font-semibold text-emerald-400 print-text-black">{formatCurrency(eoy.pointed)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* CADRES D'APPROBATION ET SIGNATURES */}
+                        <div className="pt-4 border-t border-gray-800 print-card">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 text-xs text-gray-400 print-text-black">
+                            <span>Certifié sincère et véritable pour l'Assemblée Générale de l'exercice {currentYear}.</span>
+                            <span className="mt-1 sm:mt-0 font-semibold">Fait à Rieumes, le ____ / ____ / ________</span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="border border-gray-700 rounded-xl p-4 min-h-[115px] flex flex-col justify-between bg-gray-950/50 print-card">
+                              <span className="text-xs font-bold uppercase tracking-wider text-gray-300 print-text-black">Le Trésorier</span>
+                              <span className="text-[10px] text-gray-500 italic print-text-black">Signature :</span>
+                            </div>
+                            <div className="border border-gray-700 rounded-xl p-4 min-h-[115px] flex flex-col justify-between bg-gray-950/50 print-card">
+                              <span className="text-xs font-bold uppercase tracking-wider text-gray-300 print-text-black">Le Président</span>
+                              <span className="text-[10px] text-gray-500 italic print-text-black">Signature :</span>
+                            </div>
+                            <div className="border border-gray-700 rounded-xl p-4 min-h-[115px] flex flex-col justify-between bg-gray-950/50 print-card">
+                              <span className="text-xs font-bold uppercase tracking-wider text-gray-300 print-text-black">Les Vérificateurs aux Comptes</span>
+                              <span className="text-[10px] text-gray-500 italic print-text-black">Vu et vérifié, signatures :</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -1877,15 +2194,15 @@
                         </form>
                       </div>
 
-                      {/* PASSERELLE GOOGLE DRIVE AUTOMATIQUE */}
+                      {/* PASSERELLE GOOGLE DRIVE AUTOMATIQUE (D : RANGEMENT PAR ANNÉE) */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                           <div>
                             <h2 className="text-lg font-bold text-white flex items-center">
-                              <FolderUp className="w-5 h-5 mr-2 text-blue-400"/> Envoi Automatique des Factures vers Google Drive
+                              <FolderUp className="w-5 h-5 mr-2 text-blue-400"/> Envoi Automatique & Classement par Année dans Google Drive
                             </h2>
                             <p className="text-xs text-gray-400 mt-0.5">
-                              Nommage automatique des fichiers et photos : <code className="text-blue-300">facture_NomDuTiers_NuméroUnique</code>
+                              Chaque facture est nommée <code className="text-blue-300">facture_NomDuTiers_Numéro</code> et rangée dans le sous-dossier de son année (<code className="text-emerald-300">2026/</code>, <code className="text-emerald-300">2027/</code>...).
                             </p>
                           </div>
                           <span className={`text-xs px-3 py-1 rounded-full font-semibold ${driveScriptUrl ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'}`}>
@@ -2013,7 +2330,14 @@
 
                       {/* SAUVEGARDE JSON */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
-                        <h2 className="text-lg font-bold text-white mb-4 flex items-center"><Database className="w-5 h-5 mr-2 text-red-500"/> Sauvegarde sur Ordinateur (.json)</h2>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                          <h2 className="text-lg font-bold text-white flex items-center"><Database className="w-5 h-5 mr-2 text-red-500"/> Sauvegarde sur Ordinateur (.json)</h2>
+                          {lastJsonBackupAt && (
+                            <span className="text-xs text-gray-400">
+                              Dernière copie PC : {new Date(lastJsonBackupAt).toLocaleDateString('fr-FR')}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex flex-col sm:flex-row gap-4">
                           <button onClick={exportBackup} className="flex-1 flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium">
                             <Download className="w-5 h-5"/><span>Sauvegarder sur le PC (.json)</span>
@@ -2186,6 +2510,17 @@
             </div>
           )}
 
+          {/* MODALE : VIREMENT INTERNE COMPTE À COMPTE (B) */}
+          {isTransferModalOpen && (
+            <InternalTransferModal
+              onClose={() => setIsTransferModalOpen(false)}
+              onSave={addInternalTransfer}
+              accounts={accounts}
+              currentAccountId={currentAccountId}
+              currentYear={currentYear}
+            />
+          )}
+
           {/* MODALE : GESTION / APERÇU DU DOCUMENT LIÉ (JUSTIFICATIF) */}
           {receiptModalTx && (
             <ReceiptModal
@@ -2251,6 +2586,109 @@
       );
     }
 
+    // --- B. MODALE DE VIREMENT INTERNE (COMPTE À COMPTE) ---
+    function InternalTransferModal({ onClose, onSave, accounts, currentAccountId, currentYear }) {
+      const defaultFrom = currentAccountId !== 'all' ? currentAccountId : (accounts[0]?.id || '');
+      const defaultTo = accounts.find(a => a.id !== defaultFrom)?.id || (accounts[0]?.id || '');
+
+      const todayIso = new Date().toISOString().split('T')[0];
+      const initialDate = todayIso.startsWith(currentYear) ? todayIso : `${currentYear}-01-01`;
+
+      const [fromAccountId, setFromAccountId] = useState(defaultFrom);
+      const [toAccountId, setToAccountId] = useState(defaultTo);
+      const [amount, setAmount] = useState('');
+      const [date, setDate] = useState(initialDate);
+      const [description, setDescription] = useState('Virement interne / Dépôt');
+      const [paymentMethod, setPaymentMethod] = useState('Virement');
+      const [reconciled, setReconciled] = useState(false);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!amount || !fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
+        onSave({ fromAccountId, toAccountId, amount, date, description, paymentMethod, reconciled });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex justify-between items-center p-6 border-b border-gray-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="bg-indigo-600/20 text-indigo-400 p-2 rounded-xl border border-indigo-500/30">
+                  <ArrowLeftRight className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Virement interne (Compte à Compte)</h3>
+                  <p className="text-xs text-gray-400">Crée la sortie et l'entrée sans fausser le Bilan Annuel</p>
+                </div>
+              </div>
+              <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-red-400 mb-1">Compte débité (Sortie)</label>
+                  <select value={fromAccountId} onChange={e => setFromAccountId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-white outline-none">
+                    {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-emerald-400 mb-1">Compte crédité (Entrée)</label>
+                  <select value={toAccountId} onChange={e => setToAccountId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-white outline-none">
+                    {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {fromAccountId === toAccountId && (
+                <p className="text-xs text-red-400 font-medium">Veuillez choisir deux comptes différents.</p>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Montant transféré (€)</label>
+                  <input type="number" step="0.01" required placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white font-bold outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Date</label>
+                  <input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white outline-none" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Mode</label>
+                  <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white outline-none">
+                    <option value="Virement">Virement</option>
+                    <option value="Espèces">Dépôt Espèces</option>
+                    <option value="Chèque">Chèque</option>
+                  </select>
+                </div>
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center space-x-2 cursor-pointer text-sm text-gray-300">
+                    <input type="checkbox" checked={reconciled} onChange={e => setReconciled(e.target.checked)} className="w-4 h-4 accent-emerald-500 rounded" />
+                    <span>Pointer immédiatement</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Motif / Libellé</label>
+                <input type="text" required value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex: Remise espèces caisse vers banque..." className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white outline-none" />
+              </div>
+
+              <div className="pt-3 flex space-x-3">
+                <button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button>
+                <button type="submit" disabled={!amount || fromAccountId === toAccountId} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-xl font-bold shadow-lg shadow-indigo-600/20">
+                  Valider le transfert
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
     // --- MODALE DÉDIÉE : LIER / SCANNER / ENVOYER UN DOCUMENT SUR GOOGLE DRIVE ---
     function ReceiptModal({ tx, isClosed, driveScriptUrl, onClose, onSave }) {
       const [url, setUrl] = useState(tx.receiptUrl || '');
@@ -2260,6 +2698,7 @@
 
       const isDataUrl = url.startsWith('data:');
       const isImage = isDataUrl ? url.startsWith('data:image/') : /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
+      const txYear = (tx.date || '').split('-')[0] || new Date().getFullYear().toString();
 
       const handleFileOrCamera = async (e) => {
         const file = e.target.files[0];
@@ -2271,7 +2710,7 @@
         if (driveScriptUrl) {
           setIsUploading(true);
           try {
-            const uploaded = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
+            const uploaded = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel, txYear);
             setUrl(uploaded.url);
             setFileName(uploaded.name);
             setIsUploading(false);
@@ -2362,10 +2801,10 @@
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-bold uppercase tracking-wider text-gray-300">
-                        Envoi direct dans votre dossier Google Drive
+                        Envoi direct dans le dossier Google Drive « {txYear} »
                       </label>
                       {driveScriptUrl ? (
-                        <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">Drive auto actif</span>
+                        <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">Sous-dossier {txYear} actif</span>
                       ) : (
                         <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/20">Mode local (voir Paramètres)</span>
                       )}
@@ -2375,14 +2814,14 @@
                       <label className={`flex flex-col items-center justify-center p-4 rounded-xl border border-dashed cursor-pointer transition-all text-center ${isUploading ? 'opacity-50 pointer-events-none bg-gray-800 border-gray-600' : 'bg-gray-800/70 hover:bg-gray-800 border-blue-500/40 hover:border-blue-400 text-gray-200'}`}>
                         <FolderUp className="w-6 h-6 text-blue-400 mb-1.5" />
                         <span className="text-xs font-bold text-white">{isUploading ? 'Envoi vers Drive en cours...' : 'Choisir un fichier (PC / Tél)'}</span>
-                        <span className="text-[10px] text-gray-400 mt-0.5">Renommé facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Rangé dans {txYear} / facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
                         <input type="file" accept="image/*,.pdf" onChange={handleFileOrCamera} disabled={isUploading} className="hidden" />
                       </label>
 
                       <label className={`flex flex-col items-center justify-center p-4 rounded-xl border border-dashed cursor-pointer transition-all text-center ${isUploading ? 'opacity-50 pointer-events-none bg-gray-800 border-gray-600' : 'bg-gray-800/70 hover:bg-gray-800 border-emerald-500/40 hover:border-emerald-400 text-gray-200'}`}>
                         <Camera className="w-6 h-6 text-emerald-400 mb-1.5" />
                         <span className="text-xs font-bold text-white">{isUploading ? 'Envoi vers Drive en cours...' : 'Scanner avec le Téléphone'}</span>
-                        <span className="text-[10px] text-gray-400 mt-0.5">Photo renommée facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Rangé dans {txYear} / facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
                         <input type="file" accept="image/*" capture="environment" onChange={handleFileOrCamera} disabled={isUploading} className="hidden" />
                       </label>
                     </div>
@@ -2458,10 +2897,11 @@
         const file = e.target.files[0];
         if (!file) return;
         const tierLabel = (supplier || '').trim() || (description || '').trim() || 'tiers';
+        const txYear = (date || '').split('-')[0] || new Date().getFullYear().toString();
         if (driveScriptUrl) {
           setIsUploading(true);
           try {
-            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
+            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel, txYear);
             setReceiptUrl(res.url);
             setReceiptName(res.name);
           } catch (err) {
@@ -2530,7 +2970,7 @@
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1 flex items-center justify-between">
-                  <span>Facture / Justificatif</span>
+                  <span>Facture / Justificatif (Dossier {(date || '').split('-')[0]})</span>
                   <div className="flex items-center space-x-3">
                     <label className="text-xs text-blue-400 hover:underline cursor-pointer flex items-center">
                       <FolderUp className="w-3.5 h-3.5 mr-1" />
@@ -2577,10 +3017,11 @@
         const file = e.target.files[0];
         if (!file) return;
         const tierLabel = (supplier || '').trim() || (description || '').trim() || 'tiers';
+        const txYear = (date || '').split('-')[0] || new Date().getFullYear().toString();
         if (driveScriptUrl) {
           setIsUploading(true);
           try {
-            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
+            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel, txYear);
             setReceiptUrl(res.url);
             setReceiptName(res.name);
           } catch (err) {
