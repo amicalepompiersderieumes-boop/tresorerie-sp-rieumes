@@ -321,7 +321,7 @@
             for (const path of pathsToTry) {
               if (isCancelled) return;
               try {
-                const testResp = await fetch(`${baseUrl}/${path}.json`);
+                const testResp = await fetch(`${baseUrl}/${path}.json?t=${Date.now()}`, { cache: 'no-store' });
                 if (testResp.ok) {
                   const initialData = await testResp.json();
                   activeRestUrl.current = `${baseUrl}/${path}`;
@@ -1482,7 +1482,7 @@
                           <div className="mb-4 p-3.5 bg-red-950/40 border border-red-500/30 rounded-xl text-xs text-gray-200 space-y-1.5">
                             <p className="font-bold text-red-400">Pourquoi Firebase refuse la connexion ?</p>
                             <p>Dans votre console Firebase &gt; <strong>Realtime Database</strong> &gt; onglet <strong>Règles</strong>, assurez-vous d'avoir publié ces règles puis cliquez sur <strong>Publier</strong> :</p>
-                            <pre className="bg-gray-950 p-2.5 rounded-lg text-emerald-400 font-mono text-[11px] overflow-x-auto select-all">{`{\n  "rules": {\n    "coffre_fort": {\n      "${EXPECTED_VAULT_KEY}": {\n        ".read": true,\n        ".write": true\n      }\n    }\n  }\n}`}</pre>
+                            <pre className="bg-gray-950 p-2.5 rounded-lg text-emerald-400 font-mono text-[11px] overflow-x-auto select-all">{`{\n  "rules": {\n    "coffre_fort": {\n      "vault_sp_51a9496ee31d9c64": {\n        ".read": true,\n        ".write": true\n      },\n      "vault_sp_51a9496e7121b924": {\n        ".read": true,\n        ".write": true\n      }\n    }\n  }\n}`}</pre>
                           </div>
                         )}
                         <div className="flex flex-col sm:flex-row gap-3">
