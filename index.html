@@ -256,7 +256,7 @@
           if (data) {
             const cloudUpdatedAt = data.updatedAt || '1970-01-01T00:00:00.000Z';
 
-            if (hasPendingLocalChanges && localUpdatedAt > cloudUpdatedAt) {
+            if ((hasPendingLocalChanges || localUpdatedAt > cloudUpdatedAt) && localUpdatedAt !== '1970-01-01T00:00:00.000Z') {
               saveCallback({
                 transactions,
                 accounts,
@@ -479,6 +479,16 @@
         }
       }, [availableYears, currentYear]);
 
+      // Adapte automatiquement la date de la ligne de saisie rapide à l'exercice sélectionné
+      useEffect(() => {
+        setInlineTx(prev => {
+          if (prev.date && prev.date.startsWith(currentYear)) return prev;
+          const today = new Date().toISOString().split('T')[0];
+          const newDate = today.startsWith(currentYear) ? today : `${currentYear}-01-01`;
+          return { ...prev, date: newDate };
+        });
+      }, [currentYear]);
+
       useEffect(() => {
         if (currentAccountId !== 'all') {
           setInlineTx(prev => ({ ...prev, accountId: currentAccountId }));
@@ -619,15 +629,16 @@
       };
 
       const handleInlineSubmit = () => {
-        if (!inlineTx.amount || !inlineTx.description || !inlineTx.accountId || !inlineTx.category) return;
-        ensureCategoryAndSupplierExist(inlineTx.category, inlineTx.supplier);
+        if (!inlineTx.amount || !inlineTx.description || !inlineTx.accountId) return;
+        const chosenCategory = (inlineTx.category || '').trim() || (categories[0]?.name || 'Autre');
+        ensureCategoryAndSupplierExist(chosenCategory, inlineTx.supplier);
         const newTx = {
           id: Date.now().toString(),
           type: inlineTx.type,
           amount: parseFloat(inlineTx.amount),
           description: inlineTx.description,
-          supplier: inlineTx.supplier.trim(),
-          category: inlineTx.category.trim(),
+          supplier: (inlineTx.supplier || '').trim(),
+          category: chosenCategory,
           date: inlineTx.date,
           accountId: inlineTx.accountId,
           paymentMethod: inlineTx.paymentMethod,
@@ -637,6 +648,26 @@
         };
         setTransactions(prev => [newTx, ...prev]);
         setInlineTx(prev => ({ ...prev, description: '', supplier: '', category: '', amount: '', checkNumber: '' }));
+      };
+
+      const openNextYear = () => {
+        const maxYear = Math.max(...availableYears.map(Number));
+        const nextYear = (maxYear + 1).toString();
+        if (!manuallyOpenedYears.includes(nextYear)) {
+          setManuallyOpenedYears(prev => [...prev, nextYear]);
+        }
+        // S'assure que le nouvel exercice est bien ouvert
+        setClosedYears(prev => prev.filter(y => y !== nextYear));
+        return nextYear;
+      };
+
+      const deleteYear = (year) => {
+        if (transactions.some(tx => tx.date.startsWith(year))) return;
+        setManuallyOpenedYears(prev => prev.filter(y => y !== year));
+        setClosedYears(prev => prev.filter(y => y !== year));
+        if (currentYear === year) {
+          setCurrentYear(new Date().getFullYear().toString());
+        }
       };
 
       const addAutomation = (automation) => {
@@ -1121,28 +1152,28 @@
                               </tr>
                             </thead>
                             <tbody>
-                              {!isCurrentYearClosed && (
-                                <tr className="bg-gray-800/40 border-b border-gray-700 print:hidden">
-                                  <td className="px-3 py-3"><input type="date" value={inlineTx.date} onChange={e => setInlineTx({...inlineTx, date: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none" /></td>
+                              {!isCurrentYearClosed ? (
+                                <tr className="bg-red-950/20 border-b-2 border-red-500/30 print:hidden">
+                                  <td className="px-3 py-3"><input type="date" value={inlineTx.date} onChange={e => setInlineTx({...inlineTx, date: e.target.value})} className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-full outline-none" /></td>
                                   <td className="px-3 py-3">
                                     {currentAccountId === 'all' ? (
-                                      <select value={inlineTx.accountId} onChange={e => setInlineTx({...inlineTx, accountId: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[110px]">
+                                      <select value={inlineTx.accountId} onChange={e => setInlineTx({...inlineTx, accountId: e.target.value})} className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-full outline-none min-w-[110px]">
                                         {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                                       </select>
                                     ) : (
-                                      <div className="bg-gray-800/70 border border-gray-700 rounded p-1.5 text-xs text-red-300 font-medium w-full min-w-[110px]">
+                                      <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-2 text-xs text-red-300 font-medium w-full min-w-[110px]">
                                         {accounts.find(a => a.id === currentAccountId)?.name}
                                       </div>
                                     )}
                                   </td>
-                                  <td className="px-3 py-3"><input type="text" placeholder="Nouveau libellé..." value={inlineTx.description} onChange={e => setInlineTx({...inlineTx, description: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" /></td>
+                                  <td className="px-3 py-3"><input type="text" placeholder="Saisir un nouveau libellé..." value={inlineTx.description} onChange={e => setInlineTx({...inlineTx, description: e.target.value})} onKeyDown={e => { if (e.key === 'Enter') handleInlineSubmit(); }} className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-full outline-none min-w-[140px]" /></td>
                                   <td className="px-3 py-3">
                                     <AutocompleteInput 
                                       value={inlineTx.supplier} 
                                       onChange={val => setInlineTx({...inlineTx, supplier: val})} 
                                       options={suppliers.map(s => s.name)} 
                                       placeholder="Fournisseur / Tiers..." 
-                                      className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" 
+                                      className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-full outline-none min-w-[130px]" 
                                     />
                                   </td>
                                   <td className="px-3 py-3">
@@ -1151,12 +1182,12 @@
                                       onChange={val => setInlineTx({...inlineTx, category: val})} 
                                       options={categories.map(c => c.name)} 
                                       placeholder="Choisir catégorie..." 
-                                      className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none min-w-[130px]" 
+                                      className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-full outline-none min-w-[130px]" 
                                     />
                                   </td>
                                   <td className="px-3 py-3">
                                     <div className="flex flex-col space-y-1 min-w-[100px]">
-                                      <select value={inlineTx.paymentMethod} onChange={e => setInlineTx({...inlineTx, paymentMethod: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none">
+                                      <select value={inlineTx.paymentMethod} onChange={e => setInlineTx({...inlineTx, paymentMethod: e.target.value})} className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-full outline-none">
                                         <option value="CB">CB</option>
                                         <option value="Chèque">Chèque</option>
                                         <option value="Prélèvement">Prélèvement</option>
@@ -1164,24 +1195,35 @@
                                         <option value="Espèces">Espèces</option>
                                       </select>
                                       {inlineTx.paymentMethod === 'Chèque' && (
-                                        <input type="text" placeholder="N° chèque" value={inlineTx.checkNumber} onChange={e => setInlineTx({...inlineTx, checkNumber: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-full outline-none" />
+                                        <input type="text" placeholder="N° chèque" value={inlineTx.checkNumber} onChange={e => setInlineTx({...inlineTx, checkNumber: e.target.value})} className="bg-gray-900 border border-gray-700 rounded-lg p-2 text-xs text-white w-full outline-none" />
                                       )}
                                     </div>
                                   </td>
-                                  <td className="px-3 py-3 text-right min-w-[160px]">
+                                  <td className="px-3 py-3 text-right min-w-[165px]">
                                     <div className="flex items-center justify-end space-x-2">
-                                      <select value={inlineTx.type} onChange={e => setInlineTx({...inlineTx, type: e.target.value})} className={`bg-gray-900 border border-gray-700 rounded p-1.5 text-xs outline-none font-bold ${inlineTx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
+                                      <select value={inlineTx.type} onChange={e => setInlineTx({...inlineTx, type: e.target.value})} className={`bg-gray-900 border border-gray-700 rounded-lg p-2 text-xs outline-none font-bold ${inlineTx.type === 'income' ? 'text-emerald-500' : 'text-red-400'}`}>
                                         <option value="expense">Dépense</option>
                                         <option value="income">Recette</option>
                                       </select>
-                                      <input type="number" step="0.01" placeholder="0.00" value={inlineTx.amount} onChange={e => setInlineTx({...inlineTx, amount: e.target.value})} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white w-20 outline-none text-right font-bold" />
+                                      <input type="number" step="0.01" placeholder="0.00" value={inlineTx.amount} onChange={e => setInlineTx({...inlineTx, amount: e.target.value})} onKeyDown={e => { if (e.key === 'Enter') handleInlineSubmit(); }} className="bg-gray-900 border border-gray-700 focus:border-red-500 rounded-lg p-2 text-xs text-white w-20 outline-none text-right font-bold" />
                                     </div>
                                   </td>
-                                  <td className="px-3 py-3 text-center">-</td>
+                                  <td className="px-3 py-3 text-center text-xs text-gray-500">Nouveau</td>
                                   <td className="px-3 py-3 text-center">
-                                    <button onClick={handleInlineSubmit} disabled={!inlineTx.amount || !inlineTx.description || !inlineTx.category} className="bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white p-2 rounded-lg" title="Ajouter l'écriture">
+                                    <button onClick={handleInlineSubmit} disabled={!inlineTx.amount || !inlineTx.description} className="bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white p-2 rounded-lg shadow" title="Ajouter l'écriture">
                                       <Plus className="w-4 h-4 mx-auto"/>
                                     </button>
+                                  </td>
+                                </tr>
+                              ) : (
+                                <tr className="bg-yellow-500/10 border-b border-yellow-500/20 print:hidden">
+                                  <td colSpan="9" className="px-4 py-3 text-center">
+                                    <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-yellow-400">
+                                      <span className="flex items-center font-medium"><Lock className="w-4 h-4 mr-1.5" /> L'exercice {currentYear} est actuellement clôturé (saisie directe masquée).</span>
+                                      <button onClick={() => toggleYearClosure(currentYear)} className="bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/40 px-3 py-1 rounded-lg font-bold transition-colors">
+                                        Rouvrir l'exercice {currentYear}
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               )}
@@ -1508,15 +1550,38 @@
 
                       {/* CLÔTURE D'EXERCICE */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
-                        <h2 className="text-lg font-bold text-white mb-4 flex items-center"><Lock className="w-5 h-5 mr-2 text-red-500"/> Gestion des Exercices Annuels</h2>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                          <div>
+                            <h2 className="text-lg font-bold text-white flex items-center"><Calendar className="w-5 h-5 mr-2 text-red-500"/> Gestion des Exercices Annuels</h2>
+                            <p className="text-xs text-gray-400 mt-0.5">Vous pouvez laisser plusieurs exercices ouverts en même temps. Cliquez sur un exercice pour l'ouvrir ou le clôturer.</p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const nextY = openNextYear();
+                              setCurrentYear(nextY);
+                            }}
+                            className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-colors shadow-lg shadow-blue-600/20"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Ouvrir l'exercice {Math.max(...availableYears.map(Number)) + 1}</span>
+                          </button>
+                        </div>
                         <div className="flex flex-wrap gap-3">
                           {availableYears.map(year => {
                             const closed = closedYears.includes(year);
+                            const hasTx = transactions.some(tx => tx.date.startsWith(year));
                             return (
-                              <button key={year} onClick={() => toggleYearClosure(year)} className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl border text-sm font-medium ${closed ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-gray-950 border-gray-800 text-gray-300'}`}>
-                                {closed ? <Lock className="w-4 h-4"/> : <Unlock className="w-4 h-4"/>}
-                                <span>{year} ({closed ? 'Clôturé' : 'Ouvert'})</span>
-                              </button>
+                              <div key={year} className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl border text-sm font-medium ${closed ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
+                                <button onClick={() => toggleYearClosure(year)} className="flex items-center space-x-2">
+                                  {closed ? <Lock className="w-4 h-4"/> : <Unlock className="w-4 h-4"/>}
+                                  <span>{year} ({closed ? 'Clôturé' : 'Ouvert'})</span>
+                                </button>
+                                {!hasTx && availableYears.length > 1 && (
+                                  <button onClick={() => deleteYear(year)} title="Supprimer cet exercice vide" className="ml-2 text-gray-500 hover:text-red-400 pl-2 border-l border-gray-700">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             );
                           })}
                         </div>
@@ -1635,9 +1700,8 @@
                     const isClosed = closedYears.includes(year);
                     const countTx = transactions.filter(t => t.date.startsWith(year)).length;
                     return (
-                      <button
+                      <div
                         key={year}
-                        onClick={() => { setCurrentYear(year); setIsYearPickerOpen(false); }}
                         className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between ${
                           isSelected 
                             ? 'bg-blue-600/15 border-blue-500 shadow-lg shadow-blue-600/10' 
@@ -1645,38 +1709,52 @@
                         }`}
                       >
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-2xl font-extrabold text-white">{year}</span>
-                          {isClosed ? (
-                            <span className="flex items-center space-x-1 text-[11px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded-full">
-                              <Lock className="w-3 h-3" /><span>Clôturé</span>
-                            </span>
-                          ) : (
-                            <span className="text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                              Ouvert
-                            </span>
-                          )}
+                          <button onClick={() => { setCurrentYear(year); setIsYearPickerOpen(false); }} className="text-2xl font-extrabold text-white hover:text-blue-400 transition-colors">
+                            {year}
+                          </button>
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleYearClosure(year); }}
+                              title="Cliquer pour basculer Ouvert / Clôturé"
+                              className={`flex items-center space-x-1 text-[11px] px-2.5 py-1 rounded-full border font-semibold transition-colors ${
+                                isClosed 
+                                  ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/20' 
+                                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                              }`}
+                            >
+                              {isClosed ? <><Lock className="w-3 h-3" /><span>Clôturé</span></> : <><Unlock className="w-3 h-3" /><span>Ouvert</span></>}
+                            </button>
+                            {countTx === 0 && availableYears.length > 1 && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); deleteYear(year); }}
+                                title="Supprimer cet exercice vide"
+                                className="p-1 text-gray-500 hover:text-red-400 rounded-lg"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-xs text-gray-400">{countTx} écriture(s) enregistrée(s)</p>
-                      </button>
+                        <button onClick={() => { setCurrentYear(year); setIsYearPickerOpen(false); }} className="text-left w-full flex justify-between items-center pt-2 border-t border-gray-800/60 mt-1">
+                          <span className="text-xs text-gray-400">{countTx} écriture(s)</span>
+                          <span className="text-xs font-semibold text-blue-400">Choisir →</span>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
 
                 <div className="p-4 bg-gray-950 border-t border-gray-800 flex justify-between items-center">
-                  <span className="text-xs text-gray-400">Besoin de préparer l'année suivante ?</span>
+                  <span className="text-xs text-gray-400">Garder plusieurs exercices ouverts :</span>
                   <button
                     onClick={() => {
-                      const maxYear = Math.max(...availableYears.map(Number));
-                      const nextYear = (maxYear + 1).toString();
-                      if (!manuallyOpenedYears.includes(nextYear)) {
-                        setManuallyOpenedYears(prev => [...prev, nextYear]);
-                      }
+                      const nextYear = openNextYear();
                       setCurrentYear(nextYear);
                       setIsYearPickerOpen(false);
                     }}
-                    className="flex items-center space-x-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded-xl border border-gray-700 transition-colors"
+                    className="flex items-center space-x-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl font-bold transition-colors shadow"
                   >
-                    <Plus className="w-3.5 h-3.5 text-blue-400" />
+                    <Plus className="w-3.5 h-3.5" />
                     <span>Ouvrir l'exercice {Math.max(...availableYears.map(Number)) + 1}</span>
                   </button>
                 </div>
