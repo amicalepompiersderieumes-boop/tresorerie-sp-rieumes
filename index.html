@@ -84,7 +84,6 @@
     };
 
     // --- HELPER : FUSION INTELLIGENTE MULTI-APPAREILS (ANTI-ÉCRASEMENT) ---
-    // Combine les créations/modifications du PC et du Téléphone par identifiant unique sans jamais perdre une écriture
     const smartMergeById = (localArr = [], cloudArr = [], deletedSet = new Set(), uniqueNameField = null) => {
       const map = new Map();
       (cloudArr || []).forEach(item => {
@@ -97,7 +96,6 @@
           const id = String(item.id);
           const existing = map.get(id);
           if (!existing) {
-            // Évite les doublons de noms pour les catégories / fournisseurs / comptes
             if (uniqueNameField && item[uniqueNameField]) {
               const dup = Array.from(map.values()).find(
                 x => (x[uniqueNameField] || '').trim().toLowerCase() === (item[uniqueNameField] || '').trim().toLowerCase()
@@ -117,8 +115,40 @@
       return Array.from(map.values());
     };
 
+    // --- HELPER : GÉNÉRATION DU NOM DE FICHIER "facture_nom_du_tiers_numero" ---
+    const buildInvoiceFileName = (file, tierOrFallback = '') => {
+      const originalName = (file && file.name) ? file.name : '';
+      let ext = '';
+      if (originalName.includes('.')) {
+        ext = '.' + originalName.split('.').pop().toLowerCase();
+      } else if (file && file.type) {
+        if (file.type.includes('pdf')) ext = '.pdf';
+        else if (file.type.includes('png')) ext = '.png';
+        else if (file.type.includes('webp')) ext = '.webp';
+        else if (file.type.includes('jpeg') || file.type.includes('jpg') || file.type.includes('image')) ext = '.jpg';
+      }
+      if (!ext) ext = '.jpg';
+
+      // Nettoie le nom du tiers (sans accents ni caractères spéciaux)
+      const rawTier = (tierOrFallback || '').trim() || 'tiers';
+      const cleanTier = rawTier
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '') || 'tiers';
+
+      // Génère un numéro unique lisible (ex: 20261111-4829)
+      const now = new Date();
+      const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+      const randPart = Math.floor(1000 + Math.random() * 9000);
+      const uniqueNum = `${datePart}-${randPart}`;
+
+      return `facture_${cleanTier}_${uniqueNum}${ext}`;
+    };
+
     // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE ---
-    const uploadFileToGoogleDrive = async (file, scriptUrl, prefixLabel = '') => {
+    const uploadFileToGoogleDrive = async (file, scriptUrl, tierOrFallback = '') => {
       const cleanUrl = (scriptUrl || '').trim();
       if (!cleanUrl.startsWith('https://script.google.com/macros/s/') || !cleanUrl.endsWith('/exec')) {
         throw new Error("L'URL du script doit commencer par https://script.google.com/macros/s/... et finir par /exec");
@@ -129,8 +159,7 @@
         reader.onload = async (ev) => {
           try {
             const base64Content = ev.target.result.split(',')[1];
-            const cleanPrefix = (prefixLabel || '').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
-            const finalFileName = cleanPrefix ? `${cleanPrefix}_${file.name}` : file.name;
+            const finalFileName = buildInvoiceFileName(file, tierOrFallback);
 
             const payload = JSON.stringify({
               fileName: finalFileName,
@@ -276,13 +305,11 @@
         return saved ? JSON.parse(saved) : [];
       });
 
-      // Mémorise les IDs supprimés volontairement pour que la fusion entre appareils ne les fasse pas réapparaître
       const [deletedIds, setDeletedIds] = useState(() => {
         const saved = localStorage.getItem('sp_rieumes_deletedIds');
         return saved ? JSON.parse(saved) : [];
       });
 
-      // URL Passerelle Google Drive Apps Script
       const [driveScriptUrl, setDriveScriptUrl] = useState(() => {
         return localStorage.getItem('sp_rieumes_drive_script_url') || DEFAULT_DRIVE_SCRIPT_URL;
       });
@@ -305,7 +332,6 @@
       const isUpdatingFromCloud = useRef(false);
       const hasInitialCloudSyncCompleted = useRef(false);
 
-      // Références toujours à jour pour la fusion temps réel
       const latestStateRef = useRef({
         transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl
       });
@@ -363,7 +389,6 @@
         let activeRef = null;
         let onValueChange = null;
 
-        // FUSION LIGNE PAR LIGNE : Additionne les écritures du PC et du Cloud sans jamais en écraser aucune !
         const applyCloudData = (data, saveCallback) => {
           const cur = latestStateRef.current;
           const hasPendingLocalChanges = localStorage.getItem('sp_rieumes_pending_sync') === 'true';
@@ -530,7 +555,7 @@
         };
       }, [firebaseDbUrl, isAuthenticated]);
 
-      // Sauvegarde automatique dans le navigateur ET dans le Cloud (uniquement après la 1ère fusion Cloud)
+      // Sauvegarde automatique dans le navigateur ET dans le Cloud
       useEffect(() => {
         localStorage.setItem('sp_rieumes_transactions', JSON.stringify(transactions));
         localStorage.setItem('sp_rieumes_accounts', JSON.stringify(accounts));
@@ -627,12 +652,12 @@
         setDriveTestMsg({ type: 'info', text: "Test d'envoi d'un fichier test vers votre Google Drive..." });
         try {
           const dummyBlob = new Blob(["Test de connexion Trésorerie Amicale SP Rieumes"], { type: 'text/plain' });
-          dummyBlob.name = "Test_Connexion_Tresorerie.txt";
-          const res = await uploadFileToGoogleDrive(dummyBlob, clean, "TEST");
+          dummyBlob.name = "test.txt";
+          const res = await uploadFileToGoogleDrive(dummyBlob, clean, "Amicale_SP_Rieumes");
           setDriveScriptUrl(clean);
           localStorage.setItem('sp_rieumes_drive_script_url', clean);
           forcePushToCloud(clean);
-          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier créé dans votre Drive (${res.name}) et adresse synchronisée sur tous vos appareils.` });
+          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier nommé "${res.name}" créé dans votre Drive et adresse synchronisée.` });
         } catch (err) {
           setDriveTestMsg({ type: 'error', text: err.message });
         }
@@ -644,7 +669,6 @@
       const [receiptModalTx, setReceiptModalTx] = useState(null);
       const [restoreData, setRestoreData] = useState(null);
       
-      // États du Bilan Annuel
       const [balanceGroupBy, setBalanceGroupBy] = useState('category');
       const [balanceViewMode, setBalanceViewMode] = useState('global');
       const [balanceItemFilter, setBalanceItemFilter] = useState('all');
@@ -816,7 +840,6 @@
           .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
       }, [transactions, currentAccountId, currentYear]);
 
-      // Actions avec horodatage individuel (lastModified) pour la fusion intelligente
       const addTransaction = (tx) => {
         ensureCategoryAndSupplierExist(tx.category, tx.supplier);
         const uniqueId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6);
@@ -853,11 +876,11 @@
       const handleInlineDriveFile = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        const tierLabel = (inlineTx.supplier || '').trim() || (inlineTx.description || '').trim() || 'tiers';
         if (driveScriptUrl) {
           setInlineTx(prev => ({ ...prev, uploadingInlineDrive: true }));
           try {
-            const prefix = `${inlineTx.date || currentYear}_${inlineTx.description || 'Facture'}`;
-            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, prefix);
+            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
             setInlineTx(prev => ({
               ...prev,
               receiptUrl: res.url,
@@ -879,7 +902,7 @@
             setInlineTx(prev => ({
               ...prev,
               receiptUrl: ev.target.result,
-              receiptName: file.name,
+              receiptName: buildInvoiceFileName(file, tierLabel),
               showReceiptInput: false
             }));
           };
@@ -1862,7 +1885,7 @@
                               <FolderUp className="w-5 h-5 mr-2 text-blue-400"/> Envoi Automatique des Factures vers Google Drive
                             </h2>
                             <p className="text-xs text-gray-400 mt-0.5">
-                              Dépose automatiquement vos fichiers PC ou photos prises au téléphone dans votre dossier Google Drive et synchronise l'adresse sur tous vos appareils.
+                              Nommage automatique des fichiers et photos : <code className="text-blue-300">facture_NomDuTiers_NuméroUnique</code>
                             </p>
                           </div>
                           <span className={`text-xs px-3 py-1 rounded-full font-semibold ${driveScriptUrl ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'}`}>
@@ -2243,11 +2266,12 @@
         if (!file) return;
         setFileError('');
 
+        const tierLabel = (tx.supplier || '').trim() || (tx.description || '').trim() || 'tiers';
+
         if (driveScriptUrl) {
           setIsUploading(true);
           try {
-            const prefix = `${tx.date}_${tx.description || 'Facture'}`;
-            const uploaded = await uploadFileToGoogleDrive(file, driveScriptUrl, prefix);
+            const uploaded = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
             setUrl(uploaded.url);
             setFileName(uploaded.name);
             setIsUploading(false);
@@ -2263,7 +2287,7 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             setUrl(ev.target.result);
-            setFileName(file.name);
+            setFileName(buildInvoiceFileName(file, tierLabel));
           };
           reader.readAsDataURL(file);
         }
@@ -2292,7 +2316,9 @@
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white">Document / Facture liée</h3>
-                  <p className="text-xs text-gray-400 truncate max-w-xs">{tx.description} ({new Date(tx.date).toLocaleDateString('fr-FR')})</p>
+                  <p className="text-xs text-gray-400 truncate max-w-xs">
+                    {tx.supplier ? `${tx.supplier} - ` : ''}{tx.description} ({new Date(tx.date).toLocaleDateString('fr-FR')})
+                  </p>
                 </div>
               </div>
               <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
@@ -2349,14 +2375,14 @@
                       <label className={`flex flex-col items-center justify-center p-4 rounded-xl border border-dashed cursor-pointer transition-all text-center ${isUploading ? 'opacity-50 pointer-events-none bg-gray-800 border-gray-600' : 'bg-gray-800/70 hover:bg-gray-800 border-blue-500/40 hover:border-blue-400 text-gray-200'}`}>
                         <FolderUp className="w-6 h-6 text-blue-400 mb-1.5" />
                         <span className="text-xs font-bold text-white">{isUploading ? 'Envoi vers Drive en cours...' : 'Choisir un fichier (PC / Tél)'}</span>
-                        <span className="text-[10px] text-gray-400 mt-0.5">PDF ou Image déposé dans Drive</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Renommé facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
                         <input type="file" accept="image/*,.pdf" onChange={handleFileOrCamera} disabled={isUploading} className="hidden" />
                       </label>
 
                       <label className={`flex flex-col items-center justify-center p-4 rounded-xl border border-dashed cursor-pointer transition-all text-center ${isUploading ? 'opacity-50 pointer-events-none bg-gray-800 border-gray-600' : 'bg-gray-800/70 hover:bg-gray-800 border-emerald-500/40 hover:border-emerald-400 text-gray-200'}`}>
                         <Camera className="w-6 h-6 text-emerald-400 mb-1.5" />
                         <span className="text-xs font-bold text-white">{isUploading ? 'Envoi vers Drive en cours...' : 'Scanner avec le Téléphone'}</span>
-                        <span className="text-[10px] text-gray-400 mt-0.5">Prend la photo & range dans Drive</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Photo renommée facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
                         <input type="file" accept="image/*" capture="environment" onChange={handleFileOrCamera} disabled={isUploading} className="hidden" />
                       </label>
                     </div>
@@ -2431,11 +2457,11 @@
       const handleFile = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        const tierLabel = (supplier || '').trim() || (description || '').trim() || 'tiers';
         if (driveScriptUrl) {
           setIsUploading(true);
           try {
-            const prefix = `${date}_${description || 'Facture'}`;
-            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, prefix);
+            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
             setReceiptUrl(res.url);
             setReceiptName(res.name);
           } catch (err) {
@@ -2447,7 +2473,7 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             setReceiptUrl(ev.target.result);
-            setReceiptName(file.name);
+            setReceiptName(buildInvoiceFileName(file, tierLabel));
           };
           reader.readAsDataURL(file);
         }
@@ -2522,7 +2548,7 @@
                   type="text" 
                   placeholder="Lien Google Drive automatique ou collé..." 
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm text-white outline-none" 
-                  value={receiptUrl.startsWith('data:') ? `[Fichier joint : ${receiptName}]` : receiptUrl} 
+                  value={receiptUrl.startsWith('data:') ? `[Fichier joint : ${receiptName}]` : (receiptName ? `${receiptName} (${receiptUrl})` : receiptUrl)} 
                   onChange={(e) => { setReceiptUrl(e.target.value); setReceiptName(''); }} 
                 />
               </div>
@@ -2550,11 +2576,11 @@
       const handleFile = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        const tierLabel = (supplier || '').trim() || (description || '').trim() || 'tiers';
         if (driveScriptUrl) {
           setIsUploading(true);
           try {
-            const prefix = `${date}_${description || 'Facture'}`;
-            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, prefix);
+            const res = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel);
             setReceiptUrl(res.url);
             setReceiptName(res.name);
           } catch (err) {
@@ -2566,7 +2592,7 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             setReceiptUrl(ev.target.result);
-            setReceiptName(file.name);
+            setReceiptName(buildInvoiceFileName(file, tierLabel));
           };
           reader.readAsDataURL(file);
         }
