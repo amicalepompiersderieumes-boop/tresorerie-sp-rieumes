@@ -26,6 +26,9 @@
       .print\:block { display: block !important; }
       .print-card { background: white !important; color: black !important; border-color: #d1d5db !important; }
       .print-text-black { color: black !important; }
+      #custom-print-report table { width: 100%; border-collapse: collapse; }
+      #custom-print-report th, #custom-print-report td { border: 1px solid #d1d5db; padding: 6px 10px; }
+      #custom-print-report thead { background-color: #f3f4f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
@@ -152,7 +155,7 @@
       return `facture_${cleanTier}_${uniqueNum}${ext}`;
     };
 
-    // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE (AVEC SOUS-DOSSIER PAR ANNÉE) ---
+    // --- HELPER : ENVOI ROBUSTE VERS GOOGLE DRIVE (AVEC SOUS-DOSSIER ANNÉE + SOUS-DOSSIER FOURNISSEUR / TIERS) ---
     const uploadFileToGoogleDrive = async (file, scriptUrl, tierOrFallback = '', yearFolder = '') => {
       const cleanUrl = (scriptUrl || '').trim();
       if (!cleanUrl.startsWith('https://script.google.com/macros/s/') || !cleanUrl.endsWith('/exec')) {
@@ -160,17 +163,23 @@
       }
 
       const targetYear = (yearFolder || '').toString().trim() || new Date().getFullYear().toString();
+      const targetSupplierFolder = (tierOrFallback || '')
+        .toString()
+        .trim()
+        .replace(/[\\/:*?"<>|]/g, '-') || 'Autres_Tiers';
 
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = async (ev) => {
           try {
             const base64Content = ev.target.result.split(',')[1];
-            const finalFileName = buildInvoiceFileName(file, tierOrFallback);
+            const finalFileName = buildInvoiceFileName(file, targetSupplierFolder);
 
             const payload = JSON.stringify({
               fileName: finalFileName,
               yearFolder: targetYear,
+              supplierFolder: targetSupplierFolder,
+              subFolderPath: `${targetYear}/${targetSupplierFolder}`,
               mimeType: file.type || 'application/octet-stream',
               base64: base64Content
             });
@@ -193,7 +202,12 @@
             }
 
             if (resData && resData.status === 'success' && resData.url) {
-              resolve({ url: resData.url, name: resData.name || finalFileName, folder: resData.folder || targetYear });
+              resolve({
+                url: resData.url,
+                name: resData.name || finalFileName,
+                folder: resData.folder || `${targetYear}`,
+                scriptVersion: resData.version || 1
+              });
             } else {
               reject(new Error(resData?.message || "Vérifiez l'ID du dossier Drive dans votre script Google."));
             }
@@ -336,6 +350,14 @@
       });
       const [driveTestMsg, setDriveTestMsg] = useState(null);
 
+      // Signataires officiels (Trésorier & Président) modifiables et synchronisés
+      const [treasurerName, setTreasurerName] = useState(() => {
+        return localStorage.getItem('sp_rieumes_treasurer_name') || 'Frédéric Sudron';
+      });
+      const [presidentName, setPresidentName] = useState(() => {
+        return localStorage.getItem('sp_rieumes_president_name') || 'Laurent Basque';
+      });
+
       const [pendingOfflineSync, setPendingOfflineSync] = useState(() => {
         return localStorage.getItem('sp_rieumes_pending_sync') === 'true';
       });
@@ -351,13 +373,13 @@
       const hasInitialCloudSyncCompleted = useRef(false);
 
       const latestStateRef = useRef({
-        transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl
+        transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName
       });
       useEffect(() => {
         latestStateRef.current = {
-          transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl
+          transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName
         };
-      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl]);
+      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName]);
 
       const writeDataToCloud = async (payload) => {
         if (dbRef.current) {
@@ -440,6 +462,13 @@
               ? data.driveScriptUrl.trim()
               : (localDrive ? localDrive.trim() : '');
 
+            const mergedTreasurer = (data.treasurerName && data.treasurerName.trim())
+              ? data.treasurerName.trim()
+              : (cur.treasurerName || 'Frédéric Sudron');
+            const mergedPresident = (data.presidentName && data.presidentName.trim())
+              ? data.presidentName.trim()
+              : (cur.presidentName || 'Laurent Basque');
+
             isUpdatingFromCloud.current = true;
             setTransactions(mergedTransactions);
             if (mergedAccounts.length > 0) setAccounts(mergedAccounts);
@@ -449,6 +478,8 @@
             setClosedYears(mergedClosedYears);
             setManuallyOpenedYears(mergedOpenedYears);
             setDeletedIds(mergedDeletedList);
+            setTreasurerName(mergedTreasurer);
+            setPresidentName(mergedPresident);
 
             if (mergedDriveUrl) {
               setDriveScriptUrl(mergedDriveUrl);
@@ -480,6 +511,8 @@
                 manuallyOpenedYears: mergedOpenedYears,
                 deletedIds: mergedDeletedList,
                 driveScriptUrl: mergedDriveUrl,
+                treasurerName: mergedTreasurer,
+                presidentName: mergedPresident,
                 updatedAt: nowIso
               }).catch(() => {});
             }
@@ -498,6 +531,8 @@
               manuallyOpenedYears: cur.manuallyOpenedYears,
               deletedIds: cur.deletedIds || [],
               driveScriptUrl: localDrive,
+              treasurerName: cur.treasurerName || 'Frédéric Sudron',
+              presidentName: cur.presidentName || 'Laurent Basque',
               updatedAt: nowIso
             }).then(() => {
               localStorage.setItem('sp_rieumes_updatedAt', nowIso);
@@ -583,6 +618,8 @@
         localStorage.setItem('sp_rieumes_closedYears', JSON.stringify(closedYears));
         localStorage.setItem('sp_rieumes_manuallyOpenedYears', JSON.stringify(manuallyOpenedYears));
         localStorage.setItem('sp_rieumes_deletedIds', JSON.stringify(deletedIds));
+        localStorage.setItem('sp_rieumes_treasurer_name', treasurerName);
+        localStorage.setItem('sp_rieumes_president_name', presidentName);
         if (driveScriptUrl) {
           localStorage.setItem('sp_rieumes_drive_script_url', driveScriptUrl);
         }
@@ -602,6 +639,8 @@
               manuallyOpenedYears,
               deletedIds,
               driveScriptUrl: driveScriptUrl || localStorage.getItem('sp_rieumes_drive_script_url') || '',
+              treasurerName,
+              presidentName,
               updatedAt: nowIso
             }).then(() => {
               localStorage.setItem('sp_rieumes_pending_sync', 'false');
@@ -616,7 +655,7 @@
             setPendingOfflineSync(true);
           }
         }
-      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, isAuthenticated]);
+      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName, isAuthenticated]);
 
       const forcePushToCloud = async (explicitDriveUrl) => {
         const nowIso = new Date().toISOString();
@@ -649,6 +688,8 @@
             manuallyOpenedYears,
             deletedIds: mergedDeleted,
             driveScriptUrl: urlToSave || (cloudSnap && cloudSnap.driveScriptUrl) || '',
+            treasurerName,
+            presidentName,
             updatedAt: nowIso
           });
 
@@ -667,15 +708,21 @@
           setDriveTestMsg({ type: 'error', text: "Veuillez d'abord coller l'URL du script Google." });
           return;
         }
-        setDriveTestMsg({ type: 'info', text: `Test d'envoi d'un fichier dans le sous-dossier ${currentYear} de votre Google Drive...` });
+        setDriveTestMsg({ type: 'info', text: `Test d'envoi d'un fichier dans le sous-dossier "${currentYear} / Test_Fournisseur" de votre Google Drive...` });
         try {
           const dummyBlob = new Blob(["Test de connexion Trésorerie Amicale SP Rieumes"], { type: 'text/plain' });
           dummyBlob.name = "test.txt";
-          const res = await uploadFileToGoogleDrive(dummyBlob, clean, "Amicale_SP_Rieumes", currentYear);
+          const res = await uploadFileToGoogleDrive(dummyBlob, clean, "Test_Fournisseur", currentYear);
           setDriveScriptUrl(clean);
           localStorage.setItem('sp_rieumes_drive_script_url', clean);
           forcePushToCloud(clean);
-          setDriveTestMsg({ type: 'success', text: `Succès ! Fichier "${res.name}" rangé dans le dossier "${res.folder || currentYear}" de votre Drive.` });
+          const hasSubFolder = (res.folder || '').includes('/');
+          setDriveTestMsg({
+            type: hasSubFolder ? 'success' : 'info',
+            text: hasSubFolder
+              ? `✅ Succès total ! Fichier "${res.name}" rangé dans le sous-dossier "${res.folder}" de votre Google Drive.`
+              : `⚠️ Le fichier est bien arrivé dans "${res.folder}", mais votre Google Apps Script utilise encore l'ancienne version ! Allez sur script.google.com > Déployer > Nouveau déploiement et collez la nouvelle URL ici.`
+          });
         } catch (err) {
           setDriveTestMsg({ type: 'error', text: err.message });
         }
@@ -684,7 +731,20 @@
       const [isAddModalOpen, setIsAddModalOpen] = useState(false);
       const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
       const [isAddAutomationOpen, setIsAddAutomationOpen] = useState(false);
+      const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+      const [printConfig, setPrintConfig] = useState({
+        reportType: 'ag_complete', // 'ag_complete' | 'balance_category' | 'balance_supplier' | 'ledger_full' | 'ledger_filtered' | 'unpointed_only' | 'missing_receipts'
+        accountScope: 'acc1',      // ID d'un compte spécifique ou 'all'
+        dateFrom: '',
+        dateTo: '',
+        signatureDate: new Date().toISOString().split('T')[0],
+        includeAccountsTable: true,
+        includeSignatures: true,
+        includePointedCol: true,
+        customTitle: ''
+      });
       const [editModalTx, setEditModalTx] = useState(null);
+      const [deleteConfirmTx, setDeleteConfirmTx] = useState(null);
       const [receiptModalTx, setReceiptModalTx] = useState(null);
       const [restoreData, setRestoreData] = useState(null);
       
@@ -859,7 +919,7 @@
         return res;
       }, [transactions, accounts, currentYear]);
 
-      // B. Exclusion des virements internes dans les totaux de Recettes / Dépenses du Bilan Annuel
+      // Comptabilisation complète de toutes les opérations (y compris les virements internes) dans le Bilan Annuel et le Rapport d'AG
       const categorySummary = useMemo(() => {
         const summary = {};
         categories.forEach(cat => {
@@ -867,7 +927,6 @@
         });
         
         filteredTransactions.forEach(tx => {
-          if (tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY) return;
           const catName = tx.category || 'Non catégorisé';
           if (!summary[catName]) {
             summary[catName] = { income: 0, expense: 0, total: 0 };
@@ -890,7 +949,6 @@
         });
         
         filteredTransactions.forEach(tx => {
-          if (tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY) return;
           const supName = (tx.supplier || '').trim() || 'Non renseigné';
           if (!summary[supName]) {
             summary[supName] = { income: 0, expense: 0, total: 0 };
@@ -905,12 +963,6 @@
         });
         return summary;
       }, [filteredTransactions, suppliers]);
-
-      const netInternalTransfersForYear = useMemo(() => {
-        return filteredTransactions
-          .filter(tx => tx.isInternalTransfer || tx.category === INTERNAL_TRANSFER_CATEGORY)
-          .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
-      }, [filteredTransactions]);
 
       const activeSummary = balanceGroupBy === 'category' ? categorySummary : supplierSummary;
 
@@ -987,10 +1039,19 @@
         setEditModalTx(null);
       };
 
-      const handleUpdateReceipt = (txId, newReceiptUrl, newReceiptName) => {
+      const handleUpdateReceipt = (txId, newReceiptUrl, newReceiptName, updatedSupplier) => {
+        if (updatedSupplier) {
+          ensureCategoryAndSupplierExist('', updatedSupplier);
+        }
         setTransactions(prev => prev.map(tx => 
           tx.id === txId 
-            ? { ...tx, receiptUrl: newReceiptUrl || null, receiptName: newReceiptName || null, lastModified: Date.now() } 
+            ? { 
+                ...tx, 
+                receiptUrl: newReceiptUrl || null, 
+                receiptName: newReceiptName || null,
+                supplier: updatedSupplier !== undefined ? updatedSupplier : tx.supplier,
+                lastModified: Date.now() 
+              } 
             : tx
         ));
         setReceiptModalTx(null);
@@ -999,6 +1060,7 @@
       const deleteTransaction = (id) => {
         setDeletedIds(prev => Array.from(new Set([...prev, String(id)])));
         setTransactions(prev => prev.filter(tx => tx.id !== id));
+        setDeleteConfirmTx(null);
       };
 
       const toggleReconciled = (id) => {
@@ -1178,10 +1240,7 @@
         
         csvContent += `\nTOTAL DES MOUVEMENTS${separator}${totalInc.toString().replace('.', ',')}${separator}${totalExp.toString().replace('.', ',')}${separator}${totalSolde.toString().replace('.', ',')}\n`;
         csvContent += `Report à nouveau${separator}${separator}${separator}${reportANouveau.toString().replace('.', ',')}\n`;
-        if (netInternalTransfersForYear !== 0) {
-          csvContent += `Mouvements nets de virements internes${separator}${separator}${separator}${netInternalTransfersForYear.toString().replace('.', ',')}\n`;
-        }
-        csvContent += `SOLDE FINAL (Avec report)${separator}${separator}${separator}${(reportANouveau + totalSolde + netInternalTransfersForYear).toString().replace('.', ',')}\n\n\n`;
+        csvContent += `SOLDE FINAL (Avec report)${separator}${separator}${separator}${(reportANouveau + totalSolde).toString().replace('.', ',')}\n\n\n`;
         csvContent += `DÉTAIL DES OPÉRATIONS\n`;
         const headers = ['Date', 'Compte', 'Libellé', 'Fournisseur / Tiers', 'Catégorie', 'Mode', 'N° Chèque', 'Type', 'Montant', 'Pointé', 'Justificatif'];
         csvContent += headers.join(separator) + '\n';
@@ -1213,7 +1272,7 @@
 
       const exportBackup = () => {
         const nowIso = new Date().toISOString();
-        const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, exportDate: nowIso };
+        const data = { transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName, exportDate: nowIso };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -1257,6 +1316,8 @@
             setDriveScriptUrl(restoreData.driveScriptUrl);
             setTempDriveScriptUrl(restoreData.driveScriptUrl);
           }
+          if (restoreData.treasurerName) setTreasurerName(restoreData.treasurerName);
+          if (restoreData.presidentName) setPresidentName(restoreData.presidentName);
           setRestoreData(null);
         }
       };
@@ -1293,6 +1354,109 @@
         ? 'Tous les comptes (Cumul)' 
         : (accounts.find(a => a.id === currentAccountId)?.name || 'Compte');
 
+      // Liste des comptes triée avec le compte actuellement travaillé en premier choix
+      const orderedAccountsForPrint = useMemo(() => {
+        if (currentAccountId === 'all') return accounts;
+        const activeAcc = accounts.find(a => a.id === currentAccountId);
+        const otherAccs = accounts.filter(a => a.id !== currentAccountId);
+        return activeAcc ? [activeAcc, ...otherAccs] : accounts;
+      }, [accounts, currentAccountId]);
+
+      // --- CALCUL DES DONNÉES POUR LE CENTRE D'IMPRESSION SUR-MESURE ---
+      const printReportData = useMemo(() => {
+        const scopeAccId = (!printConfig.accountScope || printConfig.accountScope === 'current')
+          ? currentAccountId
+          : printConfig.accountScope;
+        const scopeAccName = scopeAccId === 'all'
+          ? 'Tous les comptes (Cumul global)'
+          : (accounts.find(a => a.id === scopeAccId)?.name || 'Compte');
+
+        const start = printConfig.dateFrom || `${currentYear}-01-01`;
+        const end = printConfig.dateTo || `${currentYear}-12-31`;
+
+        let baseTxs = transactions
+          .filter(tx => tx.date >= start && tx.date <= end)
+          .filter(tx => scopeAccId === 'all' || tx.accountId === scopeAccId)
+          .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        if (printConfig.reportType === 'ledger_filtered') {
+          baseTxs = displayedTransactions
+            .filter(tx => scopeAccId === 'all' || tx.accountId === scopeAccId)
+            .slice()
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+        } else if (printConfig.reportType === 'unpointed_only') {
+          baseTxs = baseTxs.filter(tx => !tx.reconciled);
+        } else if (printConfig.reportType === 'missing_receipts') {
+          baseTxs = baseTxs.filter(tx => tx.type === 'expense' && !tx.isInternalTransfer && tx.category !== INTERNAL_TRANSFER_CATEGORY && !tx.receiptUrl);
+        }
+
+        const catMap = {};
+        const supMap = {};
+        let totalInc = 0;
+        let totalExp = 0;
+
+        baseTxs.forEach(tx => {
+          const cName = tx.category || 'Non catégorisé';
+          const sName = (tx.supplier || '').trim() || 'Non renseigné';
+          if (!catMap[cName]) catMap[cName] = { income: 0, expense: 0, total: 0, txs: [] };
+          if (!supMap[sName]) supMap[sName] = { income: 0, expense: 0, total: 0, txs: [] };
+
+          if (tx.type === 'income') {
+            catMap[cName].income += tx.amount;
+            catMap[cName].total += tx.amount;
+            supMap[sName].income += tx.amount;
+            supMap[sName].total += tx.amount;
+            totalInc += tx.amount;
+          } else {
+            catMap[cName].expense += tx.amount;
+            catMap[cName].total -= tx.amount;
+            supMap[sName].expense += tx.amount;
+            supMap[sName].total -= tx.amount;
+            totalExp += tx.amount;
+          }
+          catMap[cName].txs.push(tx);
+          supMap[sName].txs.push(tx);
+        });
+
+        const reportBefore = transactions
+          .filter(tx => scopeAccId === 'all' || tx.accountId === scopeAccId)
+          .filter(tx => tx.date < start)
+          .reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
+
+        return {
+          scopeAccId,
+          scopeAccName,
+          start,
+          end,
+          baseTxs,
+          catEntries: Object.entries(catMap).sort((a, b) => a[0].localeCompare(b[0])),
+          supEntries: Object.entries(supMap).sort((a, b) => a[0].localeCompare(b[0])),
+          totalInc,
+          totalExp,
+          totalNet: totalInc - totalExp,
+          reportBefore,
+          finalBalance: reportBefore + (totalInc - totalExp)
+        };
+      }, [printConfig, transactions, currentAccountId, currentYear, accounts, displayedTransactions]);
+
+      const openPrintCenter = (defaultType = 'ag_complete') => {
+        setPrintConfig(prev => ({
+          ...prev,
+          reportType: defaultType,
+          accountScope: currentAccountId,
+          dateFrom: `${currentYear}-01-01`,
+          dateTo: `${currentYear}-12-31`,
+          signatureDate: new Date().toISOString().split('T')[0]
+        }));
+        setIsPrintModalOpen(true);
+      };
+
+      const formattedSignatureDate = useMemo(() => {
+        if (!printConfig.signatureDate) return new Date().toLocaleDateString('fr-FR');
+        const [y, m, d] = printConfig.signatureDate.split('-');
+        return (y && m && d) ? `${d}/${m}/${y}` : new Date().toLocaleDateString('fr-FR');
+      }, [printConfig.signatureDate]);
+
       if (!isAuthenticated) {
         return (
           <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-4">
@@ -1326,7 +1490,7 @@
 
       return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
-          <div className="flex h-screen overflow-hidden">
+          <div className="flex h-screen overflow-hidden print:hidden">
             {/* SIDEBAR DESKTOP */}
             <aside className="hidden md:flex w-64 flex-col bg-gray-900 border-r border-gray-800 print:hidden">
               <div className="p-6 flex items-center space-x-3">
@@ -1663,6 +1827,15 @@
                                 <span>Sans facture ({missingReceiptCount})</span>
                               </button>
                             </div>
+
+                            <button
+                              onClick={() => openPrintCenter(searchQuery || quickFilter !== 'all' ? 'ledger_filtered' : 'ledger_full')}
+                              className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow transition-colors"
+                              title="Choisir les options d'impression du Livre de Comptes"
+                            >
+                              <Printer className="w-4 h-4" />
+                              <span>Imprimer / PDF</span>
+                            </button>
                           </div>
                         </div>
                         
@@ -1878,7 +2051,7 @@
                                         {!isCurrentYearClosed && (
                                           <div className="flex justify-center space-x-2">
                                             <button onClick={() => setEditModalTx(tx)} className="text-gray-400 hover:text-white" title="Modifier l'opération"><Pencil className="w-4 h-4"/></button>
-                                            <button onClick={() => deleteTransaction(tx.id)} className="text-gray-400 hover:text-red-500" title="Supprimer l'opération"><Trash2 className="w-4 h-4"/></button>
+                                            <button onClick={() => setDeleteConfirmTx(tx)} className="text-gray-400 hover:text-red-500" title="Supprimer l'opération"><Trash2 className="w-4 h-4"/></button>
                                           </div>
                                         )}
                                       </td>
@@ -1914,7 +2087,7 @@
                         <div>
                           <h2 className="text-xl font-bold text-white">Bilan Financier {currentYear} ({currentAccountName})</h2>
                           <p className="text-xs text-gray-400 mt-1">
-                            Regroupement actuel : <strong className="text-gray-200">{balanceGroupBy === 'category' ? 'Par Catégorie' : 'Par Fournisseur / Tiers'}</strong> (Hors virements internes)
+                            Regroupement actuel : <strong className="text-gray-200">{balanceGroupBy === 'category' ? 'Par Catégorie' : 'Par Fournisseur / Tiers'}</strong> (Toutes opérations bancaires incluses)
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -1954,8 +2127,8 @@
                           <button onClick={exportCSV} className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-medium">
                             <Download className="w-4 h-4"/><span>Export CSV / Sheets</span>
                           </button>
-                          <button onClick={() => window.print()} className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow">
-                            <Printer className="w-4 h-4"/><span>Imprimer Rapport AG</span>
+                          <button onClick={() => openPrintCenter('ag_complete')} className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow">
+                            <Printer className="w-4 h-4"/><span>Centre d'Impression / PDF</span>
                           </button>
                         </div>
                       </div>
@@ -1991,21 +2164,15 @@
                               ))
                             )}
                             <tr className="bg-gray-950 font-bold text-white border-t-2 border-gray-700 print-card print-text-black">
-                              <td className="px-6 py-4">TOTAL DES MOUVEMENTS {currentYear} (Hors virements internes)</td>
+                              <td className="px-6 py-4">TOTAL DES MOUVEMENTS {currentYear}</td>
                               <td className="px-6 py-4 text-right text-emerald-400 print-text-black">{formatCurrency(sumIncome)}</td>
                               <td className="px-6 py-4 text-right text-red-400 print-text-black">{formatCurrency(sumExpense)}</td>
                               <td className="px-6 py-4 text-right">{formatCurrency(sumTotal)}</td>
                             </tr>
-                            {balanceItemFilter === 'all' && netInternalTransfersForYear !== 0 && (
-                              <tr className="bg-indigo-950/20 text-indigo-300 border-t border-indigo-500/30 print-card print-text-black">
-                                <td className="px-6 py-3" colSpan="3">Mouvements nets de virements internes sur ce compte</td>
-                                <td className="px-6 py-3 text-right font-bold">{netInternalTransfersForYear > 0 ? '+' : ''}{formatCurrency(netInternalTransfersForYear)}</td>
-                              </tr>
-                            )}
                             {balanceItemFilter === 'all' && (
                               <tr className="bg-red-950/20 font-extrabold text-white border-t border-red-500/30 print-card print-text-black">
                                 <td className="px-6 py-4" colSpan="3">SOLDE FINAL AU 31/12/{currentYear} (Avec Report à nouveau)</td>
-                                <td className="px-6 py-4 text-right text-lg">{formatCurrency(reportANouveau + sumTotal + netInternalTransfersForYear)}</td>
+                                <td className="px-6 py-4 text-right text-lg">{formatCurrency(reportANouveau + sumTotal)}</td>
                               </tr>
                             )}
                           </tbody>
@@ -2014,11 +2181,9 @@
                         <div className="space-y-4">
                           {filteredSummaryEntries.map(([itemKey, data]) => {
                             const itemTxs = filteredTransactions.filter(t => 
-                              !t.isInternalTransfer && t.category !== INTERNAL_TRANSFER_CATEGORY && (
-                                balanceGroupBy === 'category' 
-                                  ? (t.category || 'Non catégorisé') === itemKey
-                                  : ((t.supplier || '').trim() || 'Non renseigné') === itemKey
-                              )
+                              balanceGroupBy === 'category' 
+                                ? (t.category || 'Non catégorisé') === itemKey
+                                : ((t.supplier || '').trim() || 'Non renseigné') === itemKey
                             );
                             if (itemTxs.length === 0) return null;
                             return (
@@ -2083,24 +2248,26 @@
                           </div>
                         </div>
 
-                        {/* CADRES D'APPROBATION ET SIGNATURES */}
+                        {/* CADRES D'APPROBATION ET SIGNATURES (TRÉSORIER & PRÉSIDENT) */}
                         <div className="pt-4 border-t border-gray-800 print-card">
                           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 text-xs text-gray-400 print-text-black">
                             <span>Certifié sincère et véritable pour l'Assemblée Générale de l'exercice {currentYear}.</span>
-                            <span className="mt-1 sm:mt-0 font-semibold">Fait à Rieumes, le ____ / ____ / ________</span>
+                            <span className="mt-1 sm:mt-0 font-semibold">Fait à Rieumes, le {formattedSignatureDate}</span>
                           </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="border border-gray-700 rounded-xl p-4 min-h-[115px] flex flex-col justify-between bg-gray-950/50 print-card">
-                              <span className="text-xs font-bold uppercase tracking-wider text-gray-300 print-text-black">Le Trésorier</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                            <div className="border border-gray-700 rounded-xl p-4 min-h-[120px] flex flex-col justify-between bg-gray-950/50 print-card">
+                              <div>
+                                <span className="text-xs font-bold uppercase tracking-wider text-gray-400 block print-text-black">Le Trésorier</span>
+                                <span className="text-sm font-extrabold text-white mt-0.5 block print-text-black">{treasurerName}</span>
+                              </div>
                               <span className="text-[10px] text-gray-500 italic print-text-black">Signature :</span>
                             </div>
-                            <div className="border border-gray-700 rounded-xl p-4 min-h-[115px] flex flex-col justify-between bg-gray-950/50 print-card">
-                              <span className="text-xs font-bold uppercase tracking-wider text-gray-300 print-text-black">Le Président</span>
+                            <div className="border border-gray-700 rounded-xl p-4 min-h-[120px] flex flex-col justify-between bg-gray-950/50 print-card">
+                              <div>
+                                <span className="text-xs font-bold uppercase tracking-wider text-gray-400 block print-text-black">Le Président</span>
+                                <span className="text-sm font-extrabold text-white mt-0.5 block print-text-black">{presidentName}</span>
+                              </div>
                               <span className="text-[10px] text-gray-500 italic print-text-black">Signature :</span>
-                            </div>
-                            <div className="border border-gray-700 rounded-xl p-4 min-h-[115px] flex flex-col justify-between bg-gray-950/50 print-card">
-                              <span className="text-xs font-bold uppercase tracking-wider text-gray-300 print-text-black">Les Vérificateurs aux Comptes</span>
-                              <span className="text-[10px] text-gray-500 italic print-text-black">Vu et vérifié, signatures :</span>
                             </div>
                           </div>
                         </div>
@@ -2194,15 +2361,49 @@
                         </form>
                       </div>
 
-                      {/* PASSERELLE GOOGLE DRIVE AUTOMATIQUE (D : RANGEMENT PAR ANNÉE) */}
+                      {/* SIGNATAIRES OFFICIELS (TRÉSORIER & PRÉSIDENT) */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
+                        <div className="mb-4">
+                          <h2 className="text-lg font-bold text-white flex items-center">
+                            <Pencil className="w-5 h-5 mr-2 text-red-500"/> Signataires Officiels (Rapport d'Assemblée Générale)
+                          </h2>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            Ces noms apparaissent automatiquement dans les cadres de signatures du Bilan Annuel et des impressions PDF. Vous pouvez les modifier à tout moment en cas de changement de bureau.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Nom et Prénom du Trésorier</label>
+                            <input
+                              type="text"
+                              value={treasurerName}
+                              onChange={(e) => setTreasurerName(e.target.value)}
+                              placeholder="Ex: Frédéric Sudron"
+                              className="w-full bg-gray-950 border border-gray-700 focus:border-red-500 rounded-xl p-3 text-sm text-white outline-none font-medium"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Nom et Prénom du Président</label>
+                            <input
+                              type="text"
+                              value={presidentName}
+                              onChange={(e) => setPresidentName(e.target.value)}
+                              placeholder="Ex: Laurent Basque"
+                              className="w-full bg-gray-950 border border-gray-700 focus:border-red-500 rounded-xl p-3 text-sm text-white outline-none font-medium"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PASSERELLE GOOGLE DRIVE AUTOMATIQUE (D : RANGEMENT PAR ANNÉE + FOURNISSEUR) */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                           <div>
                             <h2 className="text-lg font-bold text-white flex items-center">
-                              <FolderUp className="w-5 h-5 mr-2 text-blue-400"/> Envoi Automatique & Classement par Année dans Google Drive
+                              <FolderUp className="w-5 h-5 mr-2 text-blue-400"/> Envoi Automatique & Classement Année / Fournisseur dans Google Drive
                             </h2>
                             <p className="text-xs text-gray-400 mt-0.5">
-                              Chaque facture est nommée <code className="text-blue-300">facture_NomDuTiers_Numéro</code> et rangée dans le sous-dossier de son année (<code className="text-emerald-300">2026/</code>, <code className="text-emerald-300">2027/</code>...).
+                              Chaque facture est nommée <code className="text-blue-300">facture_NomDuTiers_Numéro</code> et rangée automatiquement dans <code className="text-emerald-300">Année / Nom du Fournisseur /</code> (ex: <code className="text-emerald-300">2026 / Super U Rieumes /</code>).
                             </p>
                           </div>
                           <span className={`text-xs px-3 py-1 rounded-full font-semibold ${driveScriptUrl ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'}`}>
@@ -2527,8 +2728,9 @@
               tx={receiptModalTx}
               isClosed={isCurrentYearClosed}
               driveScriptUrl={driveScriptUrl}
+              suppliers={suppliers}
               onClose={() => setReceiptModalTx(null)}
-              onSave={(url, name) => handleUpdateReceipt(receiptModalTx.id, url, name)}
+              onSave={(url, name, sup) => handleUpdateReceipt(receiptModalTx.id, url, name, sup)}
             />
           )}
 
@@ -2558,6 +2760,63 @@
             />
           )}
 
+          {/* MODALE : CONFIRMATION DE SUPPRESSION D'UNE ÉCRITURE */}
+          {deleteConfirmTx && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 print:hidden">
+              <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+                <div className="flex items-center space-x-3">
+                  <div className="bg-red-500/20 text-red-400 p-3 rounded-xl border border-red-500/30">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Supprimer cette écriture ?</h3>
+                    <p className="text-xs text-gray-400">Cette suppression sera synchronisée sur tous les appareils.</p>
+                  </div>
+                </div>
+
+                <div className="bg-gray-950 border border-gray-800 rounded-xl p-4 space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Date :</span>
+                    <span className="text-gray-200 font-medium">{new Date(deleteConfirmTx.date).toLocaleDateString('fr-FR')}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Libellé :</span>
+                    <span className="text-white font-bold">{deleteConfirmTx.description}</span>
+                  </div>
+                  {deleteConfirmTx.supplier && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Tiers :</span>
+                      <span className="text-blue-300">{deleteConfirmTx.supplier}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-1 border-t border-gray-800">
+                    <span className="text-gray-400">Montant :</span>
+                    <span className={`font-extrabold text-sm ${deleteConfirmTx.type === 'income' ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {deleteConfirmTx.type === 'income' ? '+' : '-'}{formatCurrency(deleteConfirmTx.amount)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmTx(null)}
+                    className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-xl text-sm font-medium transition-colors"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteTransaction(deleteConfirmTx.id)}
+                    className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold transition-colors shadow-lg shadow-red-600/20"
+                  >
+                    Oui, supprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* MODALE : NOUVELLE AUTOMATISATION */}
           {isAddAutomationOpen && (
             <AddAutomationModal 
@@ -2571,7 +2830,7 @@
 
           {/* MODALE : CONFIRMATION RESTAURATION */}
           {restoreData && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 print:hidden">
               <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full space-y-4">
                 <h3 className="text-xl font-bold text-white">Restaurer la sauvegarde ?</h3>
                 <p className="text-sm text-gray-300">Cette action remplacera les données actuelles par celles du fichier sélectionné.</p>
@@ -2582,117 +2841,442 @@
               </div>
             </div>
           )}
-        </div>
-      );
-    }
 
-    // --- B. MODALE DE VIREMENT INTERNE (COMPTE À COMPTE) ---
-    function InternalTransferModal({ onClose, onSave, accounts, currentAccountId, currentYear }) {
-      const defaultFrom = currentAccountId !== 'all' ? currentAccountId : (accounts[0]?.id || '');
-      const defaultTo = accounts.find(a => a.id !== defaultFrom)?.id || (accounts[0]?.id || '');
-
-      const todayIso = new Date().toISOString().split('T')[0];
-      const initialDate = todayIso.startsWith(currentYear) ? todayIso : `${currentYear}-01-01`;
-
-      const [fromAccountId, setFromAccountId] = useState(defaultFrom);
-      const [toAccountId, setToAccountId] = useState(defaultTo);
-      const [amount, setAmount] = useState('');
-      const [date, setDate] = useState(initialDate);
-      const [description, setDescription] = useState('Virement interne / Dépôt');
-      const [paymentMethod, setPaymentMethod] = useState('Virement');
-      const [reconciled, setReconciled] = useState(false);
-
-      const handleSubmit = (e) => {
-        e.preventDefault();
-        if (!amount || !fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
-        onSave({ fromAccountId, toAccountId, amount, date, description, paymentMethod, reconciled });
-      };
-
-      return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="flex justify-between items-center p-6 border-b border-gray-800">
-              <div className="flex items-center space-x-2.5">
-                <div className="bg-indigo-600/20 text-indigo-400 p-2 rounded-xl border border-indigo-500/30">
-                  <ArrowLeftRight className="w-5 h-5" />
+          {/* MODALE : CENTRE D'IMPRESSION SUR-MESURE */}
+          {isPrintModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex justify-center items-center z-50 p-4 print:hidden">
+              <div className="bg-gray-900 border border-gray-700 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl">
+                <div className="p-6 border-b border-gray-800 flex justify-between items-center">
+                  <div className="flex items-center space-x-3">
+                    <div className="bg-blue-600 p-2.5 rounded-xl text-white">
+                      <Printer className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-white">Centre d'Impression & Export PDF</h3>
+                      <p className="text-xs text-gray-400">Choisissez le modèle exact et les options à inclure sur votre document</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setIsPrintModalOpen(false)} className="text-gray-400 hover:text-white p-1">
+                    <X className="w-6 h-6" />
+                  </button>
                 </div>
-                <div>
-                  <h3 className="text-lg font-bold text-white">Virement interne (Compte à Compte)</h3>
-                  <p className="text-xs text-gray-400">Crée la sortie et l'entrée sans fausser le Bilan Annuel</p>
+
+                <div className="p-6 space-y-5 max-h-[78vh] overflow-y-auto">
+                  {/* 1. CHOIX DU MODÈLE DE DOCUMENT */}
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-300 mb-2.5">
+                      1. Quel document souhaitez-vous imprimer ?
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {[
+                        { id: 'ag_complete', title: "Rapport complet d'AG", desc: "Synthèse par catégorie + soldes des comptes + signatures" },
+                        { id: 'balance_category', title: "Bilan détaillé par Catégorie", desc: "Chaque catégorie avec le détail de ses opérations" },
+                        { id: 'balance_supplier', title: "Bilan par Fournisseur / Tiers", desc: "Total et détail des sommes versées par fournisseur" },
+                        { id: 'ledger_full', title: "Journal complet (Livre de Comptes)", desc: "Toutes les écritures de la période choisie par date" },
+                        { id: 'ledger_filtered', title: "Sélection filtrée actuelle", desc: `Uniquement les ${displayedTransactions.length} écriture(s) filtrées à l'écran` },
+                        { id: 'unpointed_only', title: "État de Rapprochement Bancaire", desc: "Liste uniquement les opérations non pointées" },
+                        { id: 'missing_receipts', title: "Dépenses sans facture liée", desc: "Liste des dépenses à régulariser (justificatif manquant)" }
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setPrintConfig(prev => ({ ...prev, reportType: opt.id }))}
+                          className={`p-3.5 rounded-2xl border text-left transition-all ${
+                            printConfig.reportType === opt.id
+                              ? 'bg-blue-600/20 border-blue-500 text-white shadow-lg shadow-blue-600/10'
+                              : 'bg-gray-950 hover:bg-gray-800 border-gray-800 text-gray-300'
+                          }`}
+                        >
+                          <div className="font-bold text-sm flex items-center justify-between">
+                            <span>{opt.title}</span>
+                            {printConfig.reportType === opt.id && <CheckCircle className="w-4 h-4 text-blue-400 flex-shrink-0" />}
+                          </div>
+                          <p className="text-[11px] text-gray-400 mt-1">{opt.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 2. PÉRIMÈTRE DES COMPTES & PÉRIODE */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-gray-800">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 mb-1">Compte à imprimer</label>
+                      <select
+                        value={printConfig.accountScope}
+                        onChange={e => setPrintConfig(prev => ({ ...prev, accountScope: e.target.value }))}
+                        className="w-full bg-gray-800 border border-gray-700 focus:border-blue-500 rounded-xl p-2.5 text-xs text-white font-semibold outline-none"
+                      >
+                        {currentAccountId === 'all' ? (
+                          <>
+                            <option value="all">★ Tous les comptes (Cumul global - Actif)</option>
+                            {accounts.map(acc => (
+                              <option key={acc.id} value={acc.id}>{acc.name}</option>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            {orderedAccountsForPrint.map((acc, idx) => (
+                              <option key={acc.id} value={acc.id}>
+                                {idx === 0 ? `★ ${acc.name} (Compte actif)` : acc.name}
+                              </option>
+                            ))}
+                            <option value="all">Tous les comptes (Cumul global)</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 mb-1">Du (Date de début)</label>
+                      <input
+                        type="date"
+                        value={printConfig.dateFrom}
+                        onChange={e => setPrintConfig(prev => ({ ...prev, dateFrom: e.target.value }))}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl p-2.5 text-xs text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 mb-1">Au (Date de fin)</label>
+                      <input
+                        type="date"
+                        value={printConfig.dateTo}
+                        onChange={e => setPrintConfig(prev => ({ ...prev, dateTo: e.target.value }))}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl p-2.5 text-xs text-white outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 3. OPTIONS D'AFFICHAGE SUR LE PAPIER */}
+                  <div className="pt-2 border-t border-gray-800 space-y-3">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-300">
+                      2. Éléments à faire figurer sur l'impression
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <label className="flex items-center space-x-2.5 bg-gray-950 border border-gray-800 p-3 rounded-xl cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={printConfig.includeAccountsTable}
+                          onChange={e => setPrintConfig(prev => ({ ...prev, includeAccountsTable: e.target.checked }))}
+                          className="w-4 h-4 accent-blue-500 rounded"
+                        />
+                        <span className="text-xs text-gray-200 font-medium">Situation des 3 comptes</span>
+                      </label>
+                      <label className="flex items-center space-x-2.5 bg-gray-950 border border-gray-800 p-3 rounded-xl cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={printConfig.includeSignatures}
+                          onChange={e => setPrintConfig(prev => ({ ...prev, includeSignatures: e.target.checked }))}
+                          className="w-4 h-4 accent-blue-500 rounded"
+                        />
+                        <span className="text-xs text-gray-200 font-medium">Cadres de signatures AG</span>
+                      </label>
+                      <label className="flex items-center space-x-2.5 bg-gray-950 border border-gray-800 p-3 rounded-xl cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={printConfig.includePointedCol}
+                          onChange={e => setPrintConfig(prev => ({ ...prev, includePointedCol: e.target.checked }))}
+                          className="w-4 h-4 accent-blue-500 rounded"
+                        />
+                        <span className="text-xs text-gray-200 font-medium">Colonne Pointé / N° Chèque</span>
+                      </label>
+                    </div>
+
+                    {printConfig.includeSignatures && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Signataire — Le Trésorier</label>
+                          <input
+                            type="text"
+                            value={treasurerName}
+                            onChange={e => setTreasurerName(e.target.value)}
+                            placeholder="Frédéric Sudron"
+                            className="w-full bg-gray-800 border border-gray-700 focus:border-blue-500 rounded-xl p-2.5 text-xs text-white font-semibold outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Signataire — Le Président</label>
+                          <input
+                            type="text"
+                            value={presidentName}
+                            onChange={e => setPresidentName(e.target.value)}
+                            placeholder="Laurent Basque"
+                            className="w-full bg-gray-800 border border-gray-700 focus:border-blue-500 rounded-xl p-2.5 text-xs text-white font-semibold outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Date de signature (Auto : Aujourd'hui)</label>
+                          <input
+                            type="date"
+                            value={printConfig.signatureDate}
+                            onChange={e => setPrintConfig(prev => ({ ...prev, signatureDate: e.target.value }))}
+                            className="w-full bg-gray-800 border border-gray-700 focus:border-blue-500 rounded-xl p-2.5 text-xs text-white font-semibold outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Titre personnalisé ou note de bas de page (optionnel)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Document présenté lors de l'Assemblée Générale du 15/12/2026..."
+                        value={printConfig.customTitle}
+                        onChange={e => setPrintConfig(prev => ({ ...prev, customTitle: e.target.value }))}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl p-2.5 text-xs text-white outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 bg-gray-950 border-t border-gray-800 flex justify-between items-center">
+                  <span className="text-xs text-gray-400">
+                    Astuce : choisissez <strong>« Enregistrer au format PDF »</strong> dans l'imprimante pour créer un PDF.
+                  </span>
+                  <div className="flex space-x-3">
+                    <button
+                      type="button"
+                      onClick={() => setIsPrintModalOpen(false)}
+                      className="px-4 py-2.5 bg-gray-800 text-white rounded-xl text-xs font-medium"
+                    >
+                      Fermer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-lg shadow-blue-600/20"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>Lancer l'impression / PDF</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-              <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
+            </div>
+          )}
+
+          {/* ZONE D'IMPRESSION SUR-MESURE (VISIBLE UNIQUEMENT SUR PAPIER / PDF) */}
+          <div id="custom-print-report" className="hidden print:block p-6 text-black bg-white text-xs space-y-6">
+            {/* EN-TÊTE OFFICIEL */}
+            <div className="border-b-2 border-black pb-4 flex justify-between items-start">
+              <div>
+                <h1 className="text-xl font-extrabold uppercase tracking-wide">Amicale des Sapeurs-Pompiers de Rieumes</h1>
+                <h2 className="text-base font-bold mt-1">
+                  {printConfig.reportType === 'ag_complete' && `Rapport Financier d'Assemblée Générale — Exercice ${currentYear}`}
+                  {printConfig.reportType === 'balance_category' && `Bilan Détaillé par Catégorie — Exercice ${currentYear}`}
+                  {printConfig.reportType === 'balance_supplier' && `Bilan par Fournisseur / Tiers — Exercice ${currentYear}`}
+                  {printConfig.reportType === 'ledger_full' && `Journal du Livre de Comptes — Exercice ${currentYear}`}
+                  {printConfig.reportType === 'ledger_filtered' && `Extrait Filtré du Livre de Comptes — Exercice ${currentYear}`}
+                  {printConfig.reportType === 'unpointed_only' && `État de Rapprochement Bancaire (Opérations non pointées)`}
+                  {printConfig.reportType === 'missing_receipts' && `Relevé des Dépenses sans Justificatif Lié`}
+                </h2>
+                {printConfig.customTitle && <p className="text-xs italic text-gray-700 mt-0.5">{printConfig.customTitle}</p>}
+                <p className="text-xs text-gray-700 mt-1">
+                  Périmètre : <strong>{printReportData.scopeAccName}</strong> • Période du <strong>{new Date(printReportData.start).toLocaleDateString('fr-FR')}</strong> au <strong>{new Date(printReportData.end).toLocaleDateString('fr-FR')}</strong>
+                </p>
+              </div>
+              <div className="text-right text-[11px] text-gray-600">
+                <p>Édité le {new Date().toLocaleDateString('fr-FR')}</p>
+                <p>{printReportData.baseTxs.length} écriture(s)</p>
+              </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase text-red-400 mb-1">Compte débité (Sortie)</label>
-                  <select value={fromAccountId} onChange={e => setFromAccountId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-white outline-none">
-                    {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold uppercase text-emerald-400 mb-1">Compte crédité (Entrée)</label>
-                  <select value={toAccountId} onChange={e => setToAccountId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-sm text-white outline-none">
-                    {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              {fromAccountId === toAccountId && (
-                <p className="text-xs text-red-400 font-medium">Veuillez choisir deux comptes différents.</p>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Montant transféré (€)</label>
-                  <input type="number" step="0.01" required placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white font-bold outline-none" />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Date</label>
-                  <input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white outline-none" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Mode</label>
-                  <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white outline-none">
-                    <option value="Virement">Virement</option>
-                    <option value="Espèces">Dépôt Espèces</option>
-                    <option value="Chèque">Chèque</option>
-                  </select>
-                </div>
-                <div className="flex items-end pb-2">
-                  <label className="flex items-center space-x-2 cursor-pointer text-sm text-gray-300">
-                    <input type="checkbox" checked={reconciled} onChange={e => setReconciled(e.target.checked)} className="w-4 h-4 accent-emerald-500 rounded" />
-                    <span>Pointer immédiatement</span>
-                  </label>
-                </div>
-              </div>
-
+            {/* BANDEAU SYNTHÈSE DES TOTAUX */}
+            <div className="grid grid-cols-4 gap-3 border border-gray-400 rounded-lg p-3 bg-gray-50">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Motif / Libellé</label>
-                <input type="text" required value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex: Remise espèces caisse vers banque..." className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-white outline-none" />
+                <span className="block text-[10px] uppercase text-gray-600">Report antérieur</span>
+                <span className="text-sm font-bold">{formatCurrency(printReportData.reportBefore)}</span>
               </div>
+              <div>
+                <span className="block text-[10px] uppercase text-gray-600">Total Recettes</span>
+                <span className="text-sm font-bold">+{formatCurrency(printReportData.totalInc)}</span>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase text-gray-600">Total Dépenses</span>
+                <span className="text-sm font-bold">-{formatCurrency(printReportData.totalExp)}</span>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase text-gray-600">Solde Final Période</span>
+                <span className="text-sm font-extrabold">{formatCurrency(printReportData.finalBalance)}</span>
+              </div>
+            </div>
 
-              <div className="pt-3 flex space-x-3">
-                <button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button>
-                <button type="submit" disabled={!amount || fromAccountId === toAccountId} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-xl font-bold shadow-lg shadow-indigo-600/20">
-                  Valider le transfert
-                </button>
+            {/* CONTENU SELON LE MODÈLE CHOISI */}
+            {printConfig.reportType === 'ag_complete' && (
+              <div className="space-y-4">
+                <h3 className="font-bold text-sm uppercase border-b border-gray-400 pb-1">Récapitulatif par Catégorie</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="text-left">Catégorie</th>
+                      <th className="text-right">Recettes</th>
+                      <th className="text-right">Dépenses</th>
+                      <th className="text-right">Solde net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {printReportData.catEntries.map(([cat, d]) => (
+                      <tr key={cat}>
+                        <td className="font-medium">{cat}</td>
+                        <td className="text-right">{d.income > 0 ? formatCurrency(d.income) : '-'}</td>
+                        <td className="text-right">{d.expense > 0 ? formatCurrency(d.expense) : '-'}</td>
+                        <td className="text-right font-bold">{formatCurrency(d.total)}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold bg-gray-100">
+                      <td>TOTAL DES MOUVEMENTS</td>
+                      <td className="text-right">{formatCurrency(printReportData.totalInc)}</td>
+                      <td className="text-right">{formatCurrency(printReportData.totalExp)}</td>
+                      <td className="text-right">{formatCurrency(printReportData.totalNet)}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-            </form>
+            )}
+
+            {(printConfig.reportType === 'balance_category' || printConfig.reportType === 'balance_supplier') && (
+              <div className="space-y-4">
+                {(printConfig.reportType === 'balance_category' ? printReportData.catEntries : printReportData.supEntries).map(([groupName, d]) => (
+                  <div key={groupName} className="break-inside-avoid">
+                    <div className="flex justify-between items-center bg-gray-100 px-3 py-1.5 font-bold border border-gray-400 border-b-0">
+                      <span>{groupName} ({d.txs.length} écriture{d.txs.length > 1 ? 's' : ''})</span>
+                      <span>Recettes : {formatCurrency(d.income)} | Dépenses : {formatCurrency(d.expense)} | Solde : {formatCurrency(d.total)}</span>
+                    </div>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th className="text-left">Date</th>
+                          <th className="text-left">Compte</th>
+                          <th className="text-left">Libellé</th>
+                          <th className="text-left">{printConfig.reportType === 'balance_category' ? 'Fournisseur / Tiers' : 'Catégorie'}</th>
+                          {printConfig.includePointedCol && <th className="text-left">Mode / Chèque</th>}
+                          <th className="text-right">Montant</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {d.txs.map(tx => (
+                          <tr key={tx.id}>
+                            <td>{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
+                            <td>{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
+                            <td>{tx.description}</td>
+                            <td>{printConfig.reportType === 'balance_category' ? (tx.supplier || '-') : (tx.category || '-')}</td>
+                            {printConfig.includePointedCol && (
+                              <td>{tx.paymentMethod || '-'}{tx.checkNumber ? ` (N°${tx.checkNumber})` : ''}</td>
+                            )}
+                            <td className="text-right font-semibold">{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(printConfig.reportType === 'ledger_full' || printConfig.reportType === 'ledger_filtered' || printConfig.reportType === 'unpointed_only' || printConfig.reportType === 'missing_receipts') && (
+              <div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="text-left">Date</th>
+                      <th className="text-left">Compte</th>
+                      <th className="text-left">Libellé</th>
+                      <th className="text-left">Fournisseur / Tiers</th>
+                      <th className="text-left">Catégorie</th>
+                      {printConfig.includePointedCol && <th className="text-left">Mode / Chèque</th>}
+                      {printConfig.includePointedCol && <th className="text-center">Pointé</th>}
+                      <th className="text-right">Montant</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {printReportData.baseTxs.length === 0 ? (
+                      <tr>
+                        <td colSpan={printConfig.includePointedCol ? 8 : 6} className="text-center py-4">Aucune écriture sur cette sélection.</td>
+                      </tr>
+                    ) : (
+                      printReportData.baseTxs.map(tx => (
+                        <tr key={tx.id}>
+                          <td>{new Date(tx.date).toLocaleDateString('fr-FR')}</td>
+                          <td>{accounts.find(a => a.id === tx.accountId)?.name || '-'}</td>
+                          <td>{tx.description}</td>
+                          <td>{tx.supplier || '-'}</td>
+                          <td>{tx.category || '-'}</td>
+                          {printConfig.includePointedCol && (
+                            <td>{tx.paymentMethod || '-'}{tx.checkNumber ? ` (N°${tx.checkNumber})` : ''}</td>
+                          )}
+                          {printConfig.includePointedCol && (
+                            <td className="text-center">{tx.reconciled ? 'Oui' : 'Non'}</td>
+                          )}
+                          <td className="text-right font-bold">{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* TABLEAU DE SITUATION DES COMPTES (OPTIONNEL) */}
+            {printConfig.includeAccountsTable && (
+              <div className="pt-4 break-inside-avoid">
+                <h3 className="font-bold text-sm uppercase border-b border-gray-400 pb-1 mb-2">
+                  Situation de la trésorerie par compte au 31/12/{currentYear}
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  {accounts.map(acc => {
+                    const eoy = endOfYearAccountBalances[acc.id] || { pointed: 0, theoretical: 0 };
+                    return (
+                      <div key={acc.id} className="border border-gray-400 rounded-lg p-3">
+                        <span className="font-bold uppercase block">{acc.name}</span>
+                        <div className="flex justify-between mt-1">
+                          <span>Solde théorique :</span>
+                          <span className="font-extrabold">{formatCurrency(eoy.theoretical)}</span>
+                        </div>
+                        <div className="flex justify-between mt-0.5 text-gray-700">
+                          <span>Solde pointé :</span>
+                          <span className="font-semibold">{formatCurrency(eoy.pointed)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* CADRES DE SIGNATURES D'ASSEMBLÉE GÉNÉRALE (OPTIONNEL : TRÉSORIER & PRÉSIDENT) */}
+            {printConfig.includeSignatures && (
+              <div className="pt-4 break-inside-avoid">
+                <div className="flex justify-between items-center mb-3 text-xs">
+                  <span>Certifié sincère et véritable — Exercice {currentYear}.</span>
+                  <span className="font-semibold">Fait à Rieumes, le {formattedSignatureDate}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="border border-gray-500 rounded-lg p-3.5 min-h-[110px] flex flex-col justify-between">
+                    <div>
+                      <span className="font-bold uppercase text-[11px] text-gray-700 block">Le Trésorier</span>
+                      <span className="font-extrabold text-sm block mt-0.5">{treasurerName}</span>
+                    </div>
+                    <span className="text-[10px] text-gray-600 italic">Signature :</span>
+                  </div>
+                  <div className="border border-gray-500 rounded-lg p-3.5 min-h-[110px] flex flex-col justify-between">
+                    <div>
+                      <span className="font-bold uppercase text-[11px] text-gray-700 block">Le Président</span>
+                      <span className="font-extrabold text-sm block mt-0.5">{presidentName}</span>
+                    </div>
+                    <span className="text-[10px] text-gray-600 italic">Signature :</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );
     }
 
     // --- MODALE DÉDIÉE : LIER / SCANNER / ENVOYER UN DOCUMENT SUR GOOGLE DRIVE ---
-    function ReceiptModal({ tx, isClosed, driveScriptUrl, onClose, onSave }) {
+    function ReceiptModal({ tx, isClosed, driveScriptUrl, suppliers = [], onClose, onSave }) {
       const [url, setUrl] = useState(tx.receiptUrl || '');
       const [fileName, setFileName] = useState(tx.receiptName || '');
+      const [folderTier, setFolderTier] = useState((tx.supplier || '').trim() || (tx.description || '').trim() || 'Autres_Tiers');
+      const [uploadSuccessInfo, setUploadSuccessInfo] = useState('');
       const [fileError, setFileError] = useState('');
       const [isUploading, setIsUploading] = useState(false);
 
@@ -2704,8 +3288,9 @@
         const file = e.target.files[0];
         if (!file) return;
         setFileError('');
+        setUploadSuccessInfo('');
 
-        const tierLabel = (tx.supplier || '').trim() || (tx.description || '').trim() || 'tiers';
+        const tierLabel = (folderTier || '').trim() || (tx.supplier || '').trim() || (tx.description || '').trim() || 'Autres_Tiers';
 
         if (driveScriptUrl) {
           setIsUploading(true);
@@ -2713,6 +3298,11 @@
             const uploaded = await uploadFileToGoogleDrive(file, driveScriptUrl, tierLabel, txYear);
             setUrl(uploaded.url);
             setFileName(uploaded.name);
+            if ((uploaded.folder || '').includes('/')) {
+              setUploadSuccessInfo(`✅ Rangé dans Google Drive : ${uploaded.folder} / ${uploaded.name}`);
+            } else {
+              setUploadSuccessInfo(`⚠️ Rangé dans "${uploaded.folder}" uniquement. Pour activer le sous-dossier "${tierLabel}", faites "Déployer > Nouveau déploiement" dans Google Apps Script et collez la nouvelle URL dans Paramètres.`);
+            }
             setIsUploading(false);
           } catch (err) {
             setFileError("Échec de l'envoi vers Google Drive : " + err.message);
@@ -2747,7 +3337,7 @@
 
       return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg overflow-visible shadow-2xl">
             <div className="flex justify-between items-center p-5 border-b border-gray-800">
               <div className="flex items-center space-x-2.5">
                 <div className="bg-blue-600/20 text-blue-400 p-2 rounded-xl border border-blue-500/30">
@@ -2784,6 +3374,12 @@
                     </button>
                   </div>
 
+                  {uploadSuccessInfo && (
+                    <div className={`p-2.5 rounded-lg text-xs font-medium border ${uploadSuccessInfo.startsWith('✅') ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
+                      {uploadSuccessInfo}
+                    </div>
+                  )}
+
                   {isImage && (
                     <div className="mt-2 rounded-lg overflow-hidden border border-gray-800 bg-black/40 max-h-60 flex justify-center">
                       <img src={url} alt="Aperçu du justificatif" className="max-h-60 object-contain" />
@@ -2799,12 +3395,28 @@
               {!isClosed && (
                 <div className="space-y-4 pt-2 border-t border-gray-800">
                   <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                      1. Nom du sous-dossier Fournisseur / Tiers dans « {txYear} » :
+                    </label>
+                    <AutocompleteInput
+                      value={folderTier}
+                      onChange={setFolderTier}
+                      options={suppliers.map(s => s.name)}
+                      placeholder="Ex: Super U Rieumes"
+                      className="w-full bg-gray-800 border border-gray-700 focus:border-blue-500 rounded-xl p-2.5 text-xs text-white font-semibold outline-none"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Chemin Drive créé : <strong className="text-emerald-400">{txYear} / {(folderTier || 'Autres_Tiers').trim()} / facture_{(folderTier || 'tiers').trim().replace(/[^a-zA-Z0-9]/g, '_')}...</strong>
+                    </p>
+                  </div>
+
+                  <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-bold uppercase tracking-wider text-gray-300">
-                        Envoi direct dans le dossier Google Drive « {txYear} »
+                        2. Choisir ou scanner le document
                       </label>
                       {driveScriptUrl ? (
-                        <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">Sous-dossier {txYear} actif</span>
+                        <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">Dossiers Année + Tiers actifs</span>
                       ) : (
                         <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/20">Mode local (voir Paramètres)</span>
                       )}
@@ -2814,14 +3426,14 @@
                       <label className={`flex flex-col items-center justify-center p-4 rounded-xl border border-dashed cursor-pointer transition-all text-center ${isUploading ? 'opacity-50 pointer-events-none bg-gray-800 border-gray-600' : 'bg-gray-800/70 hover:bg-gray-800 border-blue-500/40 hover:border-blue-400 text-gray-200'}`}>
                         <FolderUp className="w-6 h-6 text-blue-400 mb-1.5" />
                         <span className="text-xs font-bold text-white">{isUploading ? 'Envoi vers Drive en cours...' : 'Choisir un fichier (PC / Tél)'}</span>
-                        <span className="text-[10px] text-gray-400 mt-0.5">Rangé dans {txYear} / facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Rangé dans {txYear} / {(folderTier || 'Tiers').trim()}</span>
                         <input type="file" accept="image/*,.pdf" onChange={handleFileOrCamera} disabled={isUploading} className="hidden" />
                       </label>
 
                       <label className={`flex flex-col items-center justify-center p-4 rounded-xl border border-dashed cursor-pointer transition-all text-center ${isUploading ? 'opacity-50 pointer-events-none bg-gray-800 border-gray-600' : 'bg-gray-800/70 hover:bg-gray-800 border-emerald-500/40 hover:border-emerald-400 text-gray-200'}`}>
                         <Camera className="w-6 h-6 text-emerald-400 mb-1.5" />
                         <span className="text-xs font-bold text-white">{isUploading ? 'Envoi vers Drive en cours...' : 'Scanner avec le Téléphone'}</span>
-                        <span className="text-[10px] text-gray-400 mt-0.5">Rangé dans {txYear} / facture_{(tx.supplier || tx.description || 'tiers').replace(/[^a-zA-Z0-9]/g, '_')}...</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Rangé dans {txYear} / {(folderTier || 'Tiers').trim()}</span>
                         <input type="file" accept="image/*" capture="environment" onChange={handleFileOrCamera} disabled={isUploading} className="hidden" />
                       </label>
                     </div>
@@ -2853,7 +3465,7 @@
                 {!isClosed && url && (
                   <button
                     type="button"
-                    onClick={() => onSave('', '')}
+                    onClick={() => onSave('', '', tx.supplier)}
                     className="px-4 py-2.5 bg-red-600/15 hover:bg-red-600/25 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold transition-colors"
                   >
                     Retirer le document
@@ -2865,7 +3477,7 @@
                     <button
                       type="button"
                       disabled={isUploading}
-                      onClick={() => onSave(url.trim(), fileName)}
+                      onClick={() => onSave(url.trim(), fileName, (!tx.supplier && folderTier && folderTier !== tx.description) ? folderTier.trim() : tx.supplier)}
                       className="px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-600/20"
                     >
                       Enregistrer sur la ligne
@@ -3012,6 +3624,7 @@
       const [receiptUrl, setReceiptUrl] = useState(tx.receiptUrl || '');
       const [receiptName, setReceiptName] = useState(tx.receiptName || '');
       const [isUploading, setIsUploading] = useState(false);
+      const [showConfirmSave, setShowConfirmSave] = useState(false);
 
       const handleFile = async (e) => {
         const file = e.target.files[0];
@@ -3041,6 +3654,10 @@
 
       const handleSubmit = (e) => {
         e.preventDefault();
+        if (!showConfirmSave) {
+          setShowConfirmSave(true);
+          return;
+        }
         onSave({ 
           ...tx, 
           type, 
@@ -3114,7 +3731,22 @@
                   )}
                 </div>
               </div>
-              <div className="pt-4 flex space-x-3"><button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button><button type="submit" disabled={isUploading} className="flex-1 py-3 bg-red-600 disabled:opacity-50 text-white rounded-xl font-bold">Mettre à jour</button></div>
+              {showConfirmSave ? (
+                <div className="pt-3 border-t border-amber-500/30 bg-amber-500/10 p-3.5 rounded-xl space-y-3">
+                  <p className="text-xs text-amber-300 font-semibold text-center">
+                    Confirmez-vous l'enregistrement des modifications sur cette écriture ?
+                  </p>
+                  <div className="flex space-x-3">
+                    <button type="button" onClick={() => setShowConfirmSave(false)} className="flex-1 py-2.5 bg-gray-800 text-white rounded-xl text-xs font-medium">Retour</button>
+                    <button type="submit" disabled={isUploading} className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-lg">Oui, confirmer la modification</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="pt-4 flex space-x-3">
+                  <button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button>
+                  <button type="submit" disabled={isUploading} className="flex-1 py-3 bg-red-600 disabled:opacity-50 text-white rounded-xl font-bold">Mettre à jour</button>
+                </div>
+              )}
             </form>
           </div>
         </div>
@@ -3166,6 +3798,89 @@
                 <AutocompleteInput direction="up" value={category} onChange={setCategory} options={categories.map(c => c.name)} required={true} placeholder="Choisir catégorie..." className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
               </div>
               <div className="pt-4 flex space-x-3"><button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button><button type="submit" className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold">Enregistrer</button></div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function InternalTransferModal({ onClose, onSave, accounts, currentAccountId, currentYear }) {
+      const defaultFrom = (currentAccountId !== 'all' && accounts.some(a => a.id === currentAccountId))
+        ? currentAccountId
+        : (accounts[0]?.id || '');
+      const defaultTo = accounts.find(a => a.id !== defaultFrom)?.id || defaultFrom;
+
+      const today = new Date().toISOString().split('T')[0];
+      const defaultDate = today.startsWith(currentYear) ? today : `${currentYear}-01-01`;
+
+      const [fromAccountId, setFromAccountId] = useState(defaultFrom);
+      const [toAccountId, setToAccountId] = useState(defaultTo);
+      const [amount, setAmount] = useState('');
+      const [date, setDate] = useState(defaultDate);
+      const [description, setDescription] = useState('Virement interne');
+      const [paymentMethod, setPaymentMethod] = useState('Virement');
+      const [reconciled, setReconciled] = useState(false);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!amount || !fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
+        onSave({ fromAccountId, toAccountId, amount, date, description, paymentMethod, reconciled });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex justify-between items-center p-6 border-b border-gray-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="bg-indigo-600/20 text-indigo-400 p-2 rounded-xl border border-indigo-500/30">
+                  <ArrowLeftRight className="w-5 h-5" />
+                </div>
+                <h3 className="text-xl font-bold text-white">Virement Interne</h3>
+              </div>
+              <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Compte débité (Sortie)</label>
+                  <select value={fromAccountId} onChange={e => setFromAccountId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm text-white outline-none">
+                    {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Compte crédité (Entrée)</label>
+                  <select value={toAccountId} onChange={e => setToAccountId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm text-white outline-none">
+                    {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              {fromAccountId === toAccountId && (
+                <p className="text-xs text-red-400">Veuillez choisir deux comptes différents.</p>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Montant (€)</label>
+                  <input type="number" step="0.01" required value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none font-bold" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Date</label>
+                  <input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Motif / Libellé</label>
+                <input type="text" required value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex: Dépôt espèces Caisse vers Compte Courant" className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm text-white outline-none" />
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <label className="flex items-center space-x-2 text-xs text-gray-300 cursor-pointer">
+                  <input type="checkbox" checked={reconciled} onChange={e => setReconciled(e.target.checked)} className="w-4 h-4 accent-emerald-500 rounded" />
+                  <span>Marquer directement comme pointé sur les 2 comptes</span>
+                </label>
+              </div>
+              <div className="pt-4 flex space-x-3">
+                <button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-800 text-white rounded-xl">Annuler</button>
+                <button type="submit" disabled={fromAccountId === toAccountId || !amount} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-xl font-bold">Valider le virement</button>
+              </div>
             </form>
           </div>
         </div>
