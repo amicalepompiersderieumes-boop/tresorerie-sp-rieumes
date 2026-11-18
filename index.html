@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Trésorerie Amicale SP Rieumes</title>
+  <link rel="icon" type="image/png" href="./logo.png" />
+  <link rel="apple-touch-icon" href="./logo.png" />
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- React & ReactDOM -->
@@ -16,7 +18,21 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    body { font-family: 'Inter', sans-serif; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0b1526;
+    }
+    /* Thème Bleu Marine Sapeurs-Pompiers (inspiré de l'écusson SP Rieumes 1947) */
+    .bg-gray-950 { background-color: #0b1526 !important; }
+    .bg-gray-900 { background-color: #112038 !important; }
+    .bg-gray-900\/50 { background-color: rgba(17, 32, 56, 0.78) !important; }
+    .bg-gray-800 { background-color: #1a2d4c !important; }
+    .border-gray-800 { border-color: #1e3458 !important; }
+    .border-gray-700 { border-color: #2a4570 !important; }
+    .tricolor-bar {
+      height: 4px;
+      background: linear-gradient(90deg, #0055A4 0%, #0055A4 33.33%, #FFFFFF 33.33%, #FFFFFF 66.66%, #EF4135 66.66%, #EF4135 100%);
+    }
     input[type="number"]::-webkit-inner-spin-button,
     input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type="number"] { -moz-appearance: textfield; }
@@ -37,6 +53,52 @@
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- ÉCUSSON VECTORIEL DE SECOURS (< 1 Ko, utilisé uniquement si logo.png n'est pas trouvé) ---
+    const CrestFallbackSVG = ({ className = "w-10 h-10" }) => (
+      <svg viewBox="0 0 120 140" className={className} xmlns="http://www.w3.org/2000/svg">
+        <path d="M22 8 L98 8 L114 34 L60 132 L6 34 Z" fill="#0f2342" stroke="#ffffff" strokeWidth="3"/>
+        <path d="M22 8 L6 34 L60 132" fill="none" stroke="#0055A4" strokeWidth="6" strokeLinecap="round"/>
+        <path d="M98 8 L114 34 L60 132" fill="none" stroke="#EF4135" strokeWidth="6" strokeLinecap="round"/>
+        <path d="M60 44 C52 58 42 64 46 80 C49 91 58 96 60 96 C62 96 71 91 74 80 C78 64 68 58 60 44 Z" fill="#f97316"/>
+        <path d="M60 58 C55 67 51 72 53 82 C55 89 60 92 60 92 C60 92 65 89 67 82 C69 72 65 67 60 58 Z" fill="#facc15"/>
+        <rect x="45" y="34" width="10" height="3" fill="#0055A4"/>
+        <rect x="55" y="34" width="10" height="3" fill="#ffffff"/>
+        <rect x="65" y="34" width="10" height="3" fill="#EF4135"/>
+        <text x="60" y="27" textAnchor="middle" fill="#ffffff" fontSize="11" fontWeight="900" fontFamily="Inter, sans-serif">RIEUMES</text>
+        <text x="60" y="113" textAnchor="middle" fill="#facc15" fontSize="9" fontWeight="800" fontFamily="Inter, sans-serif">1947</text>
+      </svg>
+    );
+
+    // --- COMPOSANT LOGO HYBRIDE (0 Ko sur Firebase : lit ./logo.png ou le cache local) ---
+    function AmicaleLogo({ size = "md", customLogoData = null, className = "" }) {
+      const [fileFailed, setFileFailed] = useState(false);
+
+      useEffect(() => {
+        setFileFailed(false);
+      }, [customLogoData]);
+
+      const dims = {
+        sm: "w-9 h-9",
+        md: "w-12 h-12",
+        lg: "w-24 h-24",
+        print: "w-16 h-16"
+      }[size] || "w-12 h-12";
+
+      const srcToUse = customLogoData || "./logo.png";
+
+      if (!fileFailed) {
+        return (
+          <img
+            src={srcToUse}
+            alt="Écusson Sapeurs-Pompiers de Rieumes"
+            onError={() => setFileFailed(true)}
+            className={`${dims} object-contain drop-shadow-md flex-shrink-0 ${className}`}
+          />
+        );
+      }
+      return <CrestFallbackSVG className={`${dims} flex-shrink-0 ${className}`} />;
+    }
 
     // --- ICÔNES SVG INTÉGRÉES ---
     const Icon = ({ children, className = "w-5 h-5" }) => (
@@ -81,7 +143,7 @@
     // --- CONFIGURATION FIREBASE & GOOGLE DRIVE ---
     const DEFAULT_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.europe-west1.firebasedatabase.app";
     const FALLBACK_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.firebaseio.com";
-    const DEFAULT_DRIVE_SCRIPT_URL = "";
+    const DEFAULT_DRIVE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwI5A9Z3dYq_CyW3eQ3RDI1ZCF_ouQT4ixI6_6wRnFdH_GISy1M7BfsmKWDhoKudWaT/exec";
     const INTERNAL_TRANSFER_CATEGORY = "Virement interne";
 
     // --- SÉCURITÉ : VÉRIFICATION MASQUÉE DU MOT DE PASSE ---
@@ -220,6 +282,57 @@
       });
     };
 
+    // --- HELPER : SAUVEGARDE .JSON DIRECTEMENT DANS GOOGLE DRIVE (Trésorier > Sauvegarde > Année) ---
+    const uploadBackupJsonToGoogleDrive = async (backupObject, scriptUrl, targetYear = '') => {
+      const cleanUrl = (scriptUrl || '').trim();
+      if (!cleanUrl.startsWith('https://script.google.com/macros/s/') || !cleanUrl.endsWith('/exec')) {
+        throw new Error("Configurez d'abord l'URL du script Google Drive dans les Paramètres.");
+      }
+
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}`;
+      const yearStr = (targetYear || now.getFullYear()).toString().trim();
+      const fileName = `sauvegarde_tresorerie_${dateStr}_${timeStr}.json`;
+
+      const jsonString = JSON.stringify(backupObject, null, 2);
+      const base64Content = btoa(unescape(encodeURIComponent(jsonString)));
+
+      const payload = JSON.stringify({
+        isBackup: true,
+        fileName,
+        yearFolder: yearStr,
+        supplierFolder: `Sauvegardes_${yearStr}`,
+        subFolderPath: `Sauvegarde/${yearStr}`,
+        mimeType: 'application/json',
+        base64: base64Content
+      });
+
+      const response = await fetch(cleanUrl, {
+        method: 'POST',
+        redirect: 'follow',
+        body: payload
+      });
+
+      const rawText = await response.text();
+      let resData = null;
+      try {
+        resData = JSON.parse(rawText);
+      } catch (e) {
+        throw new Error("Réponse inattendue de Google Drive lors de la sauvegarde JSON.");
+      }
+
+      if (resData && resData.status === 'success') {
+        return {
+          url: resData.url,
+          name: resData.name || fileName,
+          folder: resData.folder || `Trésorier / Sauvegarde / ${yearStr}`,
+          scriptVersion: resData.version || 1
+        };
+      }
+      throw new Error(resData?.message || "Erreur lors de l'enregistrement de la sauvegarde sur Google Drive.");
+    };
+
     // --- COMPOSANT : Liste déroulante de recherche intelligente ---
     function AutocompleteInput({ value, onChange, options, placeholder, className, required, direction = 'down' }) {
       const [isOpen, setIsOpen] = useState(false);
@@ -282,6 +395,8 @@
         return localStorage.getItem('sp_rieumes_last_json_backup') || null;
       });
       const [dismissBackupReminder, setDismissBackupReminder] = useState(false);
+      const [isBackingUpToDrive, setIsBackingUpToDrive] = useState(false);
+      const [backupDriveMsg, setBackupDriveMsg] = useState(null);
 
       // Chargement local par défaut
       const [closedYears, setClosedYears] = useState(() => {
@@ -343,10 +458,11 @@
       });
 
       const [driveScriptUrl, setDriveScriptUrl] = useState(() => {
-        return localStorage.getItem('sp_rieumes_drive_script_url') || DEFAULT_DRIVE_SCRIPT_URL;
+        localStorage.setItem('sp_rieumes_drive_script_url', DEFAULT_DRIVE_SCRIPT_URL);
+        return DEFAULT_DRIVE_SCRIPT_URL;
       });
       const [tempDriveScriptUrl, setTempDriveScriptUrl] = useState(() => {
-        return localStorage.getItem('sp_rieumes_drive_script_url') || DEFAULT_DRIVE_SCRIPT_URL;
+        return DEFAULT_DRIVE_SCRIPT_URL;
       });
       const [driveTestMsg, setDriveTestMsg] = useState(null);
 
@@ -357,6 +473,46 @@
       const [presidentName, setPresidentName] = useState(() => {
         return localStorage.getItem('sp_rieumes_president_name') || 'Laurent Basque';
       });
+
+      // Cache local optionnel pour l'écusson (0 Ko envoyé sur Firebase)
+      const [customLogoData, setCustomLogoData] = useState(() => {
+        return localStorage.getItem('sp_rieumes_custom_logo') || null;
+      });
+      const [logoMsg, setLogoMsg] = useState(null);
+
+      // Compression miniature (< 15 Ko) en mémoire locale uniquement
+      const handleLocalLogoUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const maxDim = 220;
+            let w = img.width;
+            let h = img.height;
+            if (w > h && w > maxDim) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else if (h >= w && h > maxDim) {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/png', 0.85);
+            localStorage.setItem('sp_rieumes_custom_logo', dataUrl);
+            setCustomLogoData(dataUrl);
+            setLogoMsg("✅ Écusson mémorisé dans cet appareil (0 Ko utilisé sur Firebase) !");
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+        e.target.value = '';
+      };
 
       const [pendingOfflineSync, setPendingOfflineSync] = useState(() => {
         return localStorage.getItem('sp_rieumes_pending_sync') === 'true';
@@ -458,9 +614,7 @@
               ? (cur.closedYears || [])
               : (data.closedYears || []);
 
-            const mergedDriveUrl = (data.driveScriptUrl && data.driveScriptUrl.trim())
-              ? data.driveScriptUrl.trim()
-              : (localDrive ? localDrive.trim() : '');
+            const mergedDriveUrl = DEFAULT_DRIVE_SCRIPT_URL || (data.driveScriptUrl && data.driveScriptUrl.trim()) || (localDrive ? localDrive.trim() : '');
 
             const mergedTreasurer = (data.treasurerName && data.treasurerName.trim())
               ? data.treasurerName.trim()
@@ -497,7 +651,7 @@
             const needPushBack =
               hasPendingLocalChanges ||
               mergedTransactions.length !== cloudTxCount ||
-              (mergedDriveUrl && !data.driveScriptUrl) ||
+              data.driveScriptUrl !== mergedDriveUrl ||
               mergedDeletedList.length !== (data.deletedIds || []).length;
 
             if (needPushBack) {
@@ -1286,6 +1440,66 @@
         setDismissBackupReminder(true);
       };
 
+      // Sauvegarde centralisée dans Google Drive (Trésorier > Sauvegarde > Année) + copie PC optionnelle
+      const exportBackupToDrive = async (alsoDownloadOnPc = true) => {
+        const nowIso = new Date().toISOString();
+        const backupPayload = {
+          transactions,
+          accounts,
+          categories,
+          suppliers,
+          automations,
+          closedYears,
+          manuallyOpenedYears,
+          deletedIds,
+          driveScriptUrl,
+          treasurerName,
+          presidentName,
+          exportDate: nowIso
+        };
+
+        if (alsoDownloadOnPc) {
+          exportBackup();
+        }
+
+        const activeScriptUrl = (driveScriptUrl || localStorage.getItem('sp_rieumes_drive_script_url') || '').trim();
+        if (!activeScriptUrl) {
+          setBackupDriveMsg({
+            type: 'error',
+            text: "Copie enregistrée sur cet appareil. Pour l'envoyer aussi sur le Drive de l'Amicale, collez l'URL du script Google Drive plus haut."
+          });
+          return;
+        }
+
+        setIsBackingUpToDrive(true);
+        setBackupDriveMsg({
+          type: 'info',
+          text: `Envoi de la sauvegarde vers Google Drive (Trésorier > Sauvegarde > ${currentYear})...`
+        });
+
+        try {
+          const res = await uploadBackupJsonToGoogleDrive(backupPayload, activeScriptUrl, currentYear);
+          localStorage.setItem('sp_rieumes_last_json_backup', nowIso);
+          setLastJsonBackupAt(nowIso);
+          setDismissBackupReminder(true);
+          setIsBackingUpToDrive(false);
+
+          const isV3 = Number(res.scriptVersion) >= 3 || (res.folder || '').includes('Trésorier');
+          setBackupDriveMsg({
+            type: 'success',
+            text: isV3
+              ? `✅ Sauvegarde centralisée sur Google Drive dans "${res.folder}" (${res.name}) !`
+              : `✅ Sauvegarde envoyée sur Drive (${res.name} dans "${res.folder}"). Astuce : mettez à jour le script V3 dans MISE_EN_LIGNE.md pour qu'elle remonte automatiquement dans "Trésorier > Sauvegarde > ${currentYear}".`
+          });
+        } catch (err) {
+          setIsBackingUpToDrive(false);
+          setBackupDriveMsg({
+            type: 'error',
+            text: "Erreur d'envoi Drive : " + err.message
+          });
+        }
+      };
+
       const handleFileUpload = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -1459,30 +1673,33 @@
 
       if (!isAuthenticated) {
         return (
-          <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-4">
-            <div className="bg-gray-900 border border-gray-800 p-8 rounded-3xl w-full max-w-md shadow-2xl flex flex-col items-center">
-              <div className="bg-red-600 p-4 rounded-2xl shadow-lg shadow-red-600/20 mb-6">
-                <Flame className="w-10 h-10 text-white" />
-              </div>
-              <h1 className="text-2xl font-bold text-white mb-2 text-center tracking-tight">Amicale SP Rieumes</h1>
-              <p className="text-gray-400 mb-8 text-center text-sm font-medium">Accès sécurisé à la trésorerie</p>
-              <form onSubmit={(e) => { 
-                e.preventDefault(); 
-                if (checkPassword(passwordInput)) { 
-                  setIsAuthenticated(true); 
-                  setPasswordError(false); 
-                } else { 
-                  setPasswordError(true); 
-                } 
-              }} className="w-full space-y-5">
-                <div>
-                  <input type="password" placeholder="Mot de passe d'accès" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} className={`w-full bg-gray-950 border ${passwordError ? 'border-red-500' : 'border-gray-700'} rounded-xl p-4 text-white outline-none focus:border-red-500 transition-all text-center text-lg tracking-widest`} />
-                  {passwordError && <p className="text-red-500 text-xs mt-2 text-center font-medium">Mot de passe incorrect.</p>}
+          <div className="min-h-screen bg-gray-950 flex flex-col">
+            <div className="tricolor-bar w-full"></div>
+            <div className="flex-1 flex flex-col items-center justify-center p-4">
+              <div className="bg-gray-900 border border-gray-800 p-8 rounded-3xl w-full max-w-md shadow-2xl flex flex-col items-center relative overflow-hidden">
+                <div className="mb-4 p-2 rounded-2xl bg-gray-950/60 border border-gray-800 shadow-inner">
+                  <AmicaleLogo size="lg" customLogoData={customLogoData} />
                 </div>
-                <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-colors flex items-center justify-center shadow-lg shadow-red-600/20">
-                  <Lock className="w-5 h-5 mr-2" /> Déverrouiller
-                </button>
-              </form>
+                <h1 className="text-2xl font-extrabold text-white mb-1 text-center tracking-tight">Sapeurs-Pompiers de Rieumes</h1>
+                <p className="text-red-400 mb-7 text-center text-xs font-bold uppercase tracking-widest">Trésorerie de l'Amicale • Depuis 1947</p>
+                <form onSubmit={(e) => { 
+                  e.preventDefault(); 
+                  if (checkPassword(passwordInput)) { 
+                    setIsAuthenticated(true); 
+                    setPasswordError(false); 
+                  } else { 
+                    setPasswordError(true); 
+                  } 
+                }} className="w-full space-y-5">
+                  <div>
+                    <input type="password" placeholder="Mot de passe d'accès" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} className={`w-full bg-gray-950 border ${passwordError ? 'border-red-500' : 'border-gray-700'} rounded-xl p-4 text-white outline-none focus:border-red-500 transition-all text-center text-lg tracking-widest`} />
+                    {passwordError && <p className="text-red-500 text-xs mt-2 text-center font-medium">Mot de passe incorrect.</p>}
+                  </div>
+                  <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-colors flex items-center justify-center shadow-lg shadow-red-600/20">
+                    <Lock className="w-5 h-5 mr-2" /> Déverrouiller la trésorerie
+                  </button>
+                </form>
+              </div>
             </div>
           </div>
         );
@@ -1490,16 +1707,15 @@
 
       return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
-          <div className="flex h-screen overflow-hidden print:hidden">
+          <div className="tricolor-bar w-full print:hidden"></div>
+          <div className="flex h-[calc(100vh-4px)] overflow-hidden print:hidden">
             {/* SIDEBAR DESKTOP */}
             <aside className="hidden md:flex w-64 flex-col bg-gray-900 border-r border-gray-800 print:hidden">
-              <div className="p-6 flex items-center space-x-3">
-                <div className="bg-red-600 p-2 rounded-xl shadow-lg shadow-red-600/20 flex-shrink-0">
-                  <Flame className="w-6 h-6 text-white" />
-                </div>
+              <div className="p-5 flex items-center space-x-3 border-b border-gray-800/80">
+                <AmicaleLogo size="md" customLogoData={customLogoData} />
                 <div>
-                  <h1 className="text-lg font-bold text-white tracking-tight leading-tight">Trésorerie Amicale</h1>
-                  <p className="text-xs text-red-400 font-medium mt-0.5">Sapeurs-Pompiers de Rieumes</p>
+                  <h1 className="text-base font-extrabold text-white tracking-tight leading-tight">Amicale SP</h1>
+                  <p className="text-xs text-red-400 font-bold uppercase tracking-wider mt-0.5">Rieumes • 1947</p>
                 </div>
               </div>
               <nav className="flex-1 px-4 py-4 space-y-2">
@@ -1544,10 +1760,10 @@
             </aside>
 
             {/* HEADER MOBILE */}
-            <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-4 z-40 print:hidden">
-              <div className="flex items-center space-x-2 overflow-hidden mr-2">
-                 <Flame className="w-6 h-6 text-red-500 flex-shrink-0" />
-                 <h1 className="text-base font-bold text-white truncate">Trésorerie Amicale SP Rieumes</h1>
+            <div className="md:hidden fixed top-1 left-0 right-0 h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-4 z-40 print:hidden">
+              <div className="flex items-center space-x-2.5 overflow-hidden mr-2">
+                 <AmicaleLogo size="sm" customLogoData={customLogoData} />
+                 <h1 className="text-base font-bold text-white truncate">Amicale SP Rieumes</h1>
               </div>
               <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-gray-400 flex-shrink-0">
                 {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
@@ -1647,11 +1863,12 @@
                       </div>
                       <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
                         <button
-                          onClick={exportBackup}
-                          className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-colors flex items-center space-x-1.5 shadow"
+                          onClick={() => exportBackupToDrive(true)}
+                          disabled={isBackingUpToDrive}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-colors flex items-center space-x-1.5 shadow"
                         >
                           <Download className="w-4 h-4" />
-                          <span>Télécharger la copie du mois (.json)</span>
+                          <span>{isBackingUpToDrive ? 'Envoi sur Drive...' : 'Sauvegarder sur Drive + PC (.json)'}</span>
                         </button>
                         <button
                           onClick={() => setDismissBackupReminder(true)}
@@ -2071,11 +2288,14 @@
                     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-6 print-card">
                       {/* EN-TÊTE OFFICIEL POUR L'IMPRESSION D'ASSEMBLÉE GÉNÉRALE */}
                       <div className="hidden print:block border-b-2 border-black pb-4 mb-6">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h1 className="text-2xl font-extrabold uppercase tracking-wide text-black">Amicale des Sapeurs-Pompiers de Rieumes</h1>
-                            <p className="text-sm font-semibold text-gray-700 mt-1">Rapport Financier d'Assemblée Générale — Exercice {currentYear}</p>
-                            <p className="text-xs text-gray-600">Périmètre : {currentAccountName}</p>
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center space-x-4">
+                            <AmicaleLogo size="print" customLogoData={customLogoData} />
+                            <div>
+                              <h1 className="text-2xl font-extrabold uppercase tracking-wide text-black">Amicale des Sapeurs-Pompiers de Rieumes</h1>
+                              <p className="text-sm font-semibold text-gray-700 mt-1">Rapport Financier d'Assemblée Générale — Exercice {currentYear}</p>
+                              <p className="text-xs text-gray-600">Périmètre : {currentAccountName}</p>
+                            </div>
                           </div>
                           <div className="text-right text-xs text-gray-600">
                             <p>Édité le {new Date().toLocaleDateString('fr-FR')}</p>
@@ -2361,6 +2581,46 @@
                         </form>
                       </div>
 
+                      {/* ÉCUSSON / LOGO DE L'AMICALE (0 Ko FIREBASE - 100% LOCAL & CACHE) */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                          <div className="flex items-center space-x-4">
+                            <div className="bg-gray-950 p-2.5 rounded-2xl border border-gray-800">
+                              <AmicaleLogo size="md" customLogoData={customLogoData} />
+                            </div>
+                            <div>
+                              <h2 className="text-lg font-bold text-white">Écusson de l'Amicale SP Rieumes (Affichage & Impressions AG)</h2>
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                L'application lit automatiquement le fichier <code className="text-blue-300 font-bold">logo.png</code> placé dans le même dossier que <code className="text-blue-300">index.html</code> (0 Ko de bande passante). Vous pouvez aussi le mémoriser directement dans le navigateur de cet appareil ci-contre.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-end">
+                            <label className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl cursor-pointer transition-colors flex items-center space-x-2 shadow">
+                              <Upload className="w-4 h-4" />
+                              <span>Mémoriser logo.png sur cet appareil</span>
+                              <input type="file" accept="image/*" onChange={handleLocalLogoUpload} className="hidden" />
+                            </label>
+                            {customLogoData && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  localStorage.removeItem('sp_rieumes_custom_logo');
+                                  setCustomLogoData(null);
+                                  setLogoMsg("Cache local effacé : lecture directe du fichier ./logo.png actif.");
+                                }}
+                                className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs px-3 py-2.5 rounded-xl border border-gray-700"
+                              >
+                                Utiliser ./logo.png du dossier
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {logoMsg && (
+                          <p className="text-xs text-emerald-400 mt-3 font-medium">{logoMsg}</p>
+                        )}
+                      </div>
+
                       {/* SIGNATAIRES OFFICIELS (TRÉSORIER & PRÉSIDENT) */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                         <div className="mb-4">
@@ -2529,25 +2789,54 @@
                         </div>
                       </div>
 
-                      {/* SAUVEGARDE JSON */}
+                      {/* SAUVEGARDE JSON (GOOGLE DRIVE CENTRALISÉ + PC) */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-                          <h2 className="text-lg font-bold text-white flex items-center"><Database className="w-5 h-5 mr-2 text-red-500"/> Sauvegarde sur Ordinateur (.json)</h2>
+                          <div>
+                            <h2 className="text-lg font-bold text-white flex items-center">
+                              <Database className="w-5 h-5 mr-2 text-red-500"/> Sauvegarde de Sécurité (.json) — Google Drive & Ordinateur
+                            </h2>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              Centralise automatiquement vos sauvegardes dans votre Google Drive sous <code className="text-emerald-300 font-bold">Trésorier / Sauvegarde / {currentYear} /</code> pour que vous et Frédéric les retrouviez de n'importe où.
+                            </p>
+                          </div>
                           {lastJsonBackupAt && (
-                            <span className="text-xs text-gray-400">
-                              Dernière copie PC : {new Date(lastJsonBackupAt).toLocaleDateString('fr-FR')}
+                            <span className="text-xs text-emerald-400 font-medium">
+                              Dernière sauvegarde : {new Date(lastJsonBackupAt).toLocaleDateString('fr-FR')}
                             </span>
                           )}
                         </div>
-                        <div className="flex flex-col sm:flex-row gap-4">
-                          <button onClick={exportBackup} className="flex-1 flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium">
-                            <Download className="w-5 h-5"/><span>Sauvegarder sur le PC (.json)</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <button
+                            onClick={() => exportBackupToDrive(true)}
+                            disabled={isBackingUpToDrive}
+                            className="flex items-center justify-center space-x-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 px-4 rounded-xl font-bold text-sm transition-colors shadow-lg shadow-emerald-600/20"
+                          >
+                            <FolderUp className="w-5 h-5"/>
+                            <span>{isBackingUpToDrive ? 'Envoi vers Drive...' : `Sauvegarder sur Drive + PC (${currentYear})`}</span>
                           </button>
-                          <label className="flex-1 flex items-center justify-center space-x-2 bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl cursor-pointer font-medium">
-                            <Upload className="w-5 h-5"/><span>Restaurer un fichier (.json)</span>
+                          <button
+                            onClick={exportBackup}
+                            className="flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl font-medium text-sm transition-colors"
+                          >
+                            <Download className="w-5 h-5"/>
+                            <span>Télécharger sur cet appareil seul</span>
+                          </button>
+                          <label className="flex items-center justify-center space-x-2 bg-gray-800 hover:bg-gray-700 text-white py-3 px-4 rounded-xl cursor-pointer font-medium text-sm border border-gray-700 transition-colors">
+                            <Upload className="w-5 h-5"/>
+                            <span>Restaurer un fichier (.json)</span>
                             <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
                           </label>
                         </div>
+                        {backupDriveMsg && (
+                          <div className={`mt-3 p-3 rounded-xl text-xs font-medium border ${
+                            backupDriveMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
+                            backupDriveMsg.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-300' :
+                            'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                          }`}>
+                            {backupDriveMsg.text}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -3055,23 +3344,26 @@
 
           {/* ZONE D'IMPRESSION SUR-MESURE (VISIBLE UNIQUEMENT SUR PAPIER / PDF) */}
           <div id="custom-print-report" className="hidden print:block p-6 text-black bg-white text-xs space-y-6">
-            {/* EN-TÊTE OFFICIEL */}
-            <div className="border-b-2 border-black pb-4 flex justify-between items-start">
-              <div>
-                <h1 className="text-xl font-extrabold uppercase tracking-wide">Amicale des Sapeurs-Pompiers de Rieumes</h1>
-                <h2 className="text-base font-bold mt-1">
-                  {printConfig.reportType === 'ag_complete' && `Rapport Financier d'Assemblée Générale — Exercice ${currentYear}`}
-                  {printConfig.reportType === 'balance_category' && `Bilan Détaillé par Catégorie — Exercice ${currentYear}`}
-                  {printConfig.reportType === 'balance_supplier' && `Bilan par Fournisseur / Tiers — Exercice ${currentYear}`}
-                  {printConfig.reportType === 'ledger_full' && `Journal du Livre de Comptes — Exercice ${currentYear}`}
-                  {printConfig.reportType === 'ledger_filtered' && `Extrait Filtré du Livre de Comptes — Exercice ${currentYear}`}
-                  {printConfig.reportType === 'unpointed_only' && `État de Rapprochement Bancaire (Opérations non pointées)`}
-                  {printConfig.reportType === 'missing_receipts' && `Relevé des Dépenses sans Justificatif Lié`}
-                </h2>
-                {printConfig.customTitle && <p className="text-xs italic text-gray-700 mt-0.5">{printConfig.customTitle}</p>}
-                <p className="text-xs text-gray-700 mt-1">
-                  Périmètre : <strong>{printReportData.scopeAccName}</strong> • Période du <strong>{new Date(printReportData.start).toLocaleDateString('fr-FR')}</strong> au <strong>{new Date(printReportData.end).toLocaleDateString('fr-FR')}</strong>
-                </p>
+            {/* EN-TÊTE OFFICIEL AVEC ÉCUSSON DE L'AMICALE */}
+            <div className="border-b-2 border-black pb-4 flex justify-between items-center">
+              <div className="flex items-center space-x-4">
+                <AmicaleLogo size="print" customLogoData={customLogoData} />
+                <div>
+                  <h1 className="text-xl font-extrabold uppercase tracking-wide">Amicale des Sapeurs-Pompiers de Rieumes</h1>
+                  <h2 className="text-base font-bold mt-1">
+                    {printConfig.reportType === 'ag_complete' && `Rapport Financier d'Assemblée Générale — Exercice ${currentYear}`}
+                    {printConfig.reportType === 'balance_category' && `Bilan Détaillé par Catégorie — Exercice ${currentYear}`}
+                    {printConfig.reportType === 'balance_supplier' && `Bilan par Fournisseur / Tiers — Exercice ${currentYear}`}
+                    {printConfig.reportType === 'ledger_full' && `Journal du Livre de Comptes — Exercice ${currentYear}`}
+                    {printConfig.reportType === 'ledger_filtered' && `Extrait Filtré du Livre de Comptes — Exercice ${currentYear}`}
+                    {printConfig.reportType === 'unpointed_only' && `État de Rapprochement Bancaire (Opérations non pointées)`}
+                    {printConfig.reportType === 'missing_receipts' && `Relevé des Dépenses sans Justificatif Lié`}
+                  </h2>
+                  {printConfig.customTitle && <p className="text-xs italic text-gray-700 mt-0.5">{printConfig.customTitle}</p>}
+                  <p className="text-xs text-gray-700 mt-1">
+                    Périmètre : <strong>{printReportData.scopeAccName}</strong> • Période du <strong>{new Date(printReportData.start).toLocaleDateString('fr-FR')}</strong> au <strong>{new Date(printReportData.end).toLocaleDateString('fr-FR')}</strong>
+                  </p>
+                </div>
               </div>
               <div className="text-right text-[11px] text-gray-600">
                 <p>Édité le {new Date().toLocaleDateString('fr-FR')}</p>
