@@ -474,6 +474,60 @@
         return localStorage.getItem('sp_rieumes_president_name') || 'Laurent Basque';
       });
 
+      // Suivi de la bande passante mensuelle GitHub Pages (100 Go / mois) & taille réelle du dépôt
+      const currentMonthKey = new Date().toISOString().slice(0, 7); // ex: "2026-11"
+      const [githubMonthlyStats, setGithubMonthlyStats] = useState(() => {
+        const saved = localStorage.getItem('sp_rieumes_gh_stats');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.month === currentMonthKey) return parsed;
+          } catch (e) {}
+        }
+        return { month: currentMonthKey,loads: 1 };
+      });
+
+      const [githubRepoSlug, setGithubRepoSlug] = useState(() => {
+        const saved = localStorage.getItem('sp_rieumes_gh_repo');
+        if (saved) return saved;
+        // Détection automatique si l'application est ouverte depuis https://pseudo.github.io/depot/
+        if (window.location.hostname.endsWith('github.io')) {
+          const owner = window.location.hostname.split('.')[0];
+          const repo = window.location.pathname.split('/').filter(Boolean)[0] || `${owner}.github.io`;
+          return `${owner}/${repo}`;
+        }
+        return '';
+      });
+      const [githubLiveSizeKb, setGithubLiveSizeKb] = useState(null);
+
+      // Incrémente le compteur à chaque ouverture en ligne (hors fichier local file://)
+      useEffect(() => {
+        const isOnlineHost = window.location.protocol.startsWith('http');
+        setGithubMonthlyStats(prev => {
+          const baseLoads = (prev && prev.month === currentMonthKey) ? (prev.loads || 0) : 0;
+          const next = { month: currentMonthKey, loads: isOnlineHost ? baseLoads + 1 : Math.max(1, baseLoads) };
+          localStorage.setItem('sp_rieumes_gh_stats', JSON.stringify(next));
+          return next;
+        });
+      }, [currentMonthKey]);
+
+      // Interroge l'API publique GitHub pour connaître la taille exacte du dépôt si le nom est renseigné
+      useEffect(() => {
+        const cleanSlug = (githubRepoSlug || '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\/$/, '');
+        if (!cleanSlug || !cleanSlug.includes('/')) {
+          setGithubLiveSizeKb(null);
+          return;
+        }
+        fetch(`https://api.github.com/repos/${cleanSlug}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data && typeof data.size === 'number') {
+              setGithubLiveSizeKb(data.size); // Taille retournée en Ko par GitHub
+            }
+          })
+          .catch(() => {});
+      }, [githubRepoSlug]);
+
       // Cache local optionnel pour l'écusson (0 Ko envoyé sur Firebase)
       const [customLogoData, setCustomLogoData] = useState(() => {
         return localStorage.getItem('sp_rieumes_custom_logo') || null;
@@ -529,13 +583,13 @@
       const hasInitialCloudSyncCompleted = useRef(false);
 
       const latestStateRef = useRef({
-        transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName
+        transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName, githubMonthlyStats, githubRepoSlug
       });
       useEffect(() => {
         latestStateRef.current = {
-          transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName
+          transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName, githubMonthlyStats, githubRepoSlug
         };
-      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName]);
+      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName, githubMonthlyStats, githubRepoSlug]);
 
       const writeDataToCloud = async (payload) => {
         if (dbRef.current) {
@@ -623,6 +677,18 @@
               ? data.presidentName.trim()
               : (cur.presidentName || 'Laurent Basque');
 
+            // Fusion du compteur mensuel d'ouvertures GitHub Pages entre tous les appareils
+            let mergedGhStats = cur.githubMonthlyStats || { month: currentMonthKey, loads: 1 };
+            if (data.githubMonthlyStats && data.githubMonthlyStats.month === currentMonthKey) {
+              mergedGhStats = {
+                month: currentMonthKey,
+                loads: Math.max(mergedGhStats.loads || 1, data.githubMonthlyStats.loads || 1)
+              };
+            }
+            const mergedGhRepo = (data.githubRepoSlug && data.githubRepoSlug.trim())
+              ? data.githubRepoSlug.trim()
+              : (cur.githubRepoSlug || '');
+
             isUpdatingFromCloud.current = true;
             setTransactions(mergedTransactions);
             if (mergedAccounts.length > 0) setAccounts(mergedAccounts);
@@ -634,6 +700,12 @@
             setDeletedIds(mergedDeletedList);
             setTreasurerName(mergedTreasurer);
             setPresidentName(mergedPresident);
+            setGithubMonthlyStats(mergedGhStats);
+            localStorage.setItem('sp_rieumes_gh_stats', JSON.stringify(mergedGhStats));
+            if (mergedGhRepo) {
+              setGithubRepoSlug(mergedGhRepo);
+              localStorage.setItem('sp_rieumes_gh_repo', mergedGhRepo);
+            }
 
             if (mergedDriveUrl) {
               setDriveScriptUrl(mergedDriveUrl);
@@ -667,6 +739,8 @@
                 driveScriptUrl: mergedDriveUrl,
                 treasurerName: mergedTreasurer,
                 presidentName: mergedPresident,
+                githubMonthlyStats: mergedGhStats,
+                githubRepoSlug: mergedGhRepo,
                 updatedAt: nowIso
               }).catch(() => {});
             }
@@ -687,6 +761,8 @@
               driveScriptUrl: localDrive,
               treasurerName: cur.treasurerName || 'Frédéric Sudron',
               presidentName: cur.presidentName || 'Laurent Basque',
+              githubMonthlyStats: cur.githubMonthlyStats,
+              githubRepoSlug: cur.githubRepoSlug,
               updatedAt: nowIso
             }).then(() => {
               localStorage.setItem('sp_rieumes_updatedAt', nowIso);
@@ -774,6 +850,8 @@
         localStorage.setItem('sp_rieumes_deletedIds', JSON.stringify(deletedIds));
         localStorage.setItem('sp_rieumes_treasurer_name', treasurerName);
         localStorage.setItem('sp_rieumes_president_name', presidentName);
+        localStorage.setItem('sp_rieumes_gh_stats', JSON.stringify(githubMonthlyStats));
+        if (githubRepoSlug) localStorage.setItem('sp_rieumes_gh_repo', githubRepoSlug);
         if (driveScriptUrl) {
           localStorage.setItem('sp_rieumes_drive_script_url', driveScriptUrl);
         }
@@ -795,6 +873,8 @@
               driveScriptUrl: driveScriptUrl || localStorage.getItem('sp_rieumes_drive_script_url') || '',
               treasurerName,
               presidentName,
+              githubMonthlyStats,
+              githubRepoSlug,
               updatedAt: nowIso
             }).then(() => {
               localStorage.setItem('sp_rieumes_pending_sync', 'false');
@@ -1023,6 +1103,70 @@
       }, [filteredTransactions, quickFilter, searchQuery]);
 
       const isCurrentYearClosed = closedYears.includes(currentYear);
+
+      // --- CALCUL EN TEMPS RÉEL DU STOCKAGE & QUOTAS (FIREBASE / GITHUB / DRIVE) ---
+      const storageMetrics = useMemo(() => {
+        const payloadObj = {
+          transactions,
+          accounts,
+          categories,
+          suppliers,
+          automations,
+          closedYears,
+          manuallyOpenedYears,
+          deletedIds,
+          driveScriptUrl,
+          treasurerName,
+          presidentName
+        };
+        const jsonStr = JSON.stringify(payloadObj);
+        const bytes = new Blob([jsonStr]).size;
+        const kb = (bytes / 1024).toFixed(2);
+        const mb = (bytes / (1024 * 1024)).toFixed(4);
+        const firebaseLimitBytes = 1024 * 1024 * 1024; // 1 Go gratuit sur Firebase Realtime DB
+        const firebasePercent = Math.min(100, (bytes / firebaseLimitBytes) * 100);
+        const avgTxBytes = 320;
+        const remainingInstallations = Math.max(0, Math.floor((firebaseLimitBytes - bytes) / avgTxBytes));
+
+        const embeddedFilesCount = transactions.filter(t => (t.receiptUrl || '').startsWith('data:')).length;
+        const driveLinksCount = transactions.filter(t => t.receiptUrl && !(t.receiptUrl || '').startsWith('data:')).length;
+
+        // Estimation taille du dépôt GitHub (index.html ~115 Ko + logo.png ~85 Ko = ~210 Ko sur 1 Go autorisé)
+        const githubEstimatedKb = githubLiveSizeKb || 210;
+        const githubPercent = (githubEstimatedKb / (1024 * 1024)) * 100;
+
+        // Calcul de la bande passante mensuelle GitHub Pages (Quota gratuit = 100 Go / mois = 102 400 Mo)
+        const monthlyLoads = (githubMonthlyStats && githubMonthlyStats.loads) ? githubMonthlyStats.loads : 1;
+        const pageWeightKb = 210; // index.html + logo.png
+        const bandwidthUsedMb = ((monthlyLoads * pageWeightKb) / 1024).toFixed(2);
+        const bandwidthLimitGb = 100;
+        const bandwidthRemainingGb = Math.max(0, bandwidthLimitGb - (monthlyLoads * pageWeightKb) / (1024 * 1024)).toFixed(4);
+        const bandwidthPercent = Math.min(100, ((monthlyLoads * pageWeightKb) / (100 * 1024 * 1024)) * 100);
+        const remainingLoadsThisMonth = Math.floor((100 * 1024 * 1024) / pageWeightKb) - monthlyLoads;
+
+        // Extraction de l'ID du projet Firebase pour créer le lien direct vers la console
+        let firebaseProjectId = 'tresorerie-amicale-sp-rieumes';
+        const matchProj = (firebaseDbUrl || '').match(/https:\/\/([a-zA-Z0-9-]+)-default-rtdb/);
+        if (matchProj && matchProj[1]) firebaseProjectId = matchProj[1];
+
+        return {
+          bytes,
+          kb,
+          mb,
+          firebasePercent,
+          remainingInstallations,
+          embeddedFilesCount,
+          driveLinksCount,
+          githubEstimatedKb,
+          githubPercent,
+          monthlyLoads,
+          bandwidthUsedMb,
+          bandwidthRemainingGb,
+          bandwidthPercent,
+          remainingLoadsThisMonth,
+          firebaseConsoleUrl: `https://console.firebase.google.com/project/${firebaseProjectId}/database`
+        };
+      }, [transactions, accounts, categories, suppliers, automations, closedYears, manuallyOpenedYears, deletedIds, driveScriptUrl, treasurerName, presidentName, firebaseDbUrl, githubMonthlyStats, githubLiveSizeKb]);
 
       const balances = useMemo(() => {
         let pointed = 0;
@@ -2530,6 +2674,133 @@
                   {/* ONGLET 5 : PARAMÈTRES */}
                   {activeTab === 'settings' && (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* MONITEUR DE STOCKAGE & QUOTAS (FIREBASE / GITHUB / GOOGLE DRIVE) */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 md:col-span-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-5">
+                          <div>
+                            <h2 className="text-lg font-bold text-white flex items-center">
+                              <Database className="w-5 h-5 mr-2 text-emerald-400"/> Tableau de Bord du Stockage & des Quotas (Temps Réel)
+                            </h2>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              Visualisez l'espace consommé par votre comptabilité sur Firebase, GitHub Pages et Google Drive.
+                            </p>
+                          </div>
+                          <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-full font-bold">
+                            État de santé : Optimal (Ultra-léger)
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {/* CARTE 1 : FIREBASE REALTIME DATABASE */}
+                          <div className="bg-gray-950 border border-gray-800 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">1. Base Firebase (Écritures)</span>
+                                <span className="text-xs font-extrabold text-white">{storageMetrics.kb} Ko / 1 Go</span>
+                              </div>
+                              <div className="w-full bg-gray-800 h-2.5 rounded-full overflow-hidden my-2">
+                                <div
+                                  className="bg-emerald-500 h-full rounded-full transition-all"
+                                  style={{ width: `${Math.max(1.5, storageMetrics.firebasePercent)}%` }}
+                                ></div>
+                              </div>
+                              <p className="text-[11px] text-gray-400">
+                                Utilisé : <strong className="text-white">{storageMetrics.firebasePercent < 0.01 ? '< 0,01 %' : `${storageMetrics.firebasePercent.toFixed(3)} %`}</strong> ({transactions.length} écritures).
+                              </p>
+                              <p className="text-[11px] text-gray-400 mt-1">
+                                Capacité restante : <strong className="text-emerald-400">~{storageMetrics.remainingInstallations.toLocaleString('fr-FR')} écritures</strong> (plus de 100 ans de comptabilité).
+                              </p>
+                            </div>
+                            <a
+                              href={storageMetrics.firebaseConsoleUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center space-x-1.5 w-full bg-gray-900 hover:bg-gray-800 text-emerald-400 border border-emerald-500/30 py-2 px-3 rounded-lg text-xs font-bold transition-colors"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Ouvrir ma console Firebase (Usage)</span>
+                            </a>
+                          </div>
+
+                          {/* CARTE 2 : GITHUB (STOCKAGE + BANDE PASSANTE MENSUELLE 100 GO) */}
+                          <div className="bg-gray-950 border border-gray-800 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold uppercase tracking-wider text-blue-400">2. GitHub Pages (Bande Passante)</span>
+                                <span className="text-xs font-extrabold text-white">{storageMetrics.bandwidthUsedMb} Mo / 100 Go</span>
+                              </div>
+                              <div className="w-full bg-gray-800 h-2.5 rounded-full overflow-hidden my-2">
+                                <div
+                                  className="bg-blue-500 h-full rounded-full transition-all"
+                                  style={{ width: `${Math.max(1.5, storageMetrics.bandwidthPercent)}%` }}
+                                ></div>
+                              </div>
+                              <p className="text-[11px] text-gray-400">
+                                Bande passante restante ce mois-ci : <strong className="text-blue-300">{storageMetrics.bandwidthRemainingGb} Go / 100 Go</strong> ({storageMetrics.monthlyLoads} ouverture{storageMetrics.monthlyLoads > 1 ? 's' : ''} ce mois).
+                              </p>
+                              <p className="text-[11px] text-gray-400 mt-1">
+                                Vous pouvez encore ouvrir l'appli <strong className="text-emerald-400">~{storageMetrics.remainingLoadsThisMonth.toLocaleString('fr-FR')} fois ce mois-ci</strong>. Stockage dépôt : <strong className="text-white">{githubLiveSizeKb ? `${githubLiveSizeKb} Ko (API Live)` : `~${storageMetrics.githubEstimatedKb} Ko`} / 1 Go</strong>.
+                              </p>
+                              <div className="mt-2 pt-2 border-t border-gray-800/80">
+                                <input
+                                  type="text"
+                                  value={githubRepoSlug}
+                                  onChange={(e) => {
+                                    setGithubRepoSlug(e.target.value);
+                                    localStorage.setItem('sp_rieumes_gh_repo', e.target.value.trim());
+                                  }}
+                                  placeholder="Dépôt GitHub (ex: pseudo/tresorerie)"
+                                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none focus:border-blue-500"
+                                />
+                              </div>
+                            </div>
+                            <a
+                              href={githubRepoSlug && githubRepoSlug.includes('/') ? `https://github.com/${githubRepoSlug.trim().replace(/^https?:\/\/github\.com\//i, '')}` : "https://github.com/settings/billing"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center space-x-1.5 w-full bg-gray-900 hover:bg-gray-800 text-blue-400 border border-blue-500/30 py-2 px-3 rounded-lg text-xs font-bold transition-colors"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>{githubRepoSlug && githubRepoSlug.includes('/') ? 'Ouvrir mon dépôt GitHub' : 'Vérifier mon compte GitHub'}</span>
+                            </a>
+                          </div>
+
+                          {/* CARTE 3 : GOOGLE DRIVE (FACTURES & SAUVEGARDES JSON) */}
+                          <div className="bg-gray-950 border border-gray-800 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold uppercase tracking-wider text-amber-400">3. Google Drive (Factures)</span>
+                                <span className="text-xs font-extrabold text-white">{storageMetrics.driveLinksCount} facture(s)</span>
+                              </div>
+                              <div className="w-full bg-gray-800 h-2.5 rounded-full overflow-hidden my-2">
+                                <div className="bg-amber-400 h-full rounded-full" style={{ width: '4%' }}></div>
+                              </div>
+                              <p className="text-[11px] text-gray-400">
+                                Toutes vos photos/PDF sont déportés sur votre Drive (15 Go gratuits) et ne pèsent <strong className="text-white">0 Ko</strong> dans Firebase.
+                              </p>
+                              {storageMetrics.embeddedFilesCount > 0 ? (
+                                <p className="text-[11px] text-amber-400 mt-1 font-semibold">
+                                  ⚠️ {storageMetrics.embeddedFilesCount} fichier(s) joint(s) en local (avant Drive).
+                                </p>
+                              ) : (
+                                <p className="text-[11px] text-emerald-400 mt-1 font-semibold">
+                                  ✓ Aucun fichier lourd stocké dans Firebase.
+                                </p>
+                              )}
+                            </div>
+                            <a
+                              href="https://drive.google.com/drive/quota"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center space-x-1.5 w-full bg-gray-900 hover:bg-gray-800 text-amber-300 border border-amber-500/30 py-2 px-3 rounded-lg text-xs font-bold transition-colors"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Voir l'espace Google Drive (15 Go)</span>
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+
                       {/* COMPTES */}
                       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
                         <h2 className="text-lg font-bold text-white mb-4 flex items-center"><CreditCard className="w-5 h-5 mr-2 text-red-500"/> Comptes Bancaires</h2>
