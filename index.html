@@ -146,6 +146,9 @@
     const FolderOpen = ({ className }) => <Icon className={className}><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></Icon>;
     const Save = ({ className }) => <Icon className={className}><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></Icon>;
     const Eye = ({ className }) => <Icon className={className}><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></Icon>;
+    const Clock = ({ className }) => <Icon className={className}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Icon>;
+    const Smartphone = ({ className }) => <Icon className={className}><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></Icon>;
+    const Monitor = ({ className }) => <Icon className={className}><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></Icon>;
 
     // --- CONFIGURATION FIREBASE & GOOGLE DRIVE ---
     const DEFAULT_FIREBASE_URL = "https://tresorerie-amicale-sp-rieumes-default-rtdb.europe-west1.firebasedatabase.app";
@@ -180,6 +183,13 @@
         .split('-')
         .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
         .join('-');
+    };
+
+    const detectDeviceLabel = () => {
+      const ua = navigator.userAgent || '';
+      if (/iPad|Tablet/i.test(ua)) return 'Tablette';
+      if (/Mobi|Android|iPhone|iPod/i.test(ua)) return 'Téléphone';
+      return 'Ordinateur';
     };
 
     // --- HELPER : FUSION INTELLIGENTE MULTI-APPAREILS (ANTI-ÉCRASEMENT) ---
@@ -406,11 +416,14 @@
       const [authLoading, setAuthLoading] = useState(true);
       const [userProfile, setUserProfile] = useState(null); // { uid, name, email, role, active }
       const [allUsers, setAllUsers] = useState([]);
+      const [onlinePresence, setOnlinePresence] = useState({}); // { [uid]: { online, device, name, role, since } }
+      const [loginLogs, setLoginLogs] = useState([]); // Historique des 50 dernières connexions (Admin)
       const [loginEmail, setLoginEmail] = useState(() => localStorage.getItem('sp_rieumes_last_email') || '');
       const [loginPassword, setLoginPassword] = useState('');
       const [loginError, setLoginError] = useState('');
       const [loginInfo, setLoginInfo] = useState('');
       const [isLoggingIn, setIsLoggingIn] = useState(false);
+      const loggedSessionUidRef = useRef(null);
 
       // Changement de mot de passe personnel & création d'utilisateur en ligne (Admin)
       const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -548,13 +561,12 @@
             if (parsed && parsed.month === currentMonthKey) return parsed;
           } catch (e) {}
         }
-        return { month: currentMonthKey,loads: 1 };
+        return { month: currentMonthKey, loads: 1 };
       });
 
       const [githubRepoSlug, setGithubRepoSlug] = useState(() => {
         const saved = localStorage.getItem('sp_rieumes_gh_repo');
         if (saved) return saved;
-        // Détection automatique si l'application est ouverte depuis https://pseudo.github.io/depot/
         if (window.location.hostname.endsWith('github.io')) {
           const owner = window.location.hostname.split('.')[0];
           const repo = window.location.pathname.split('/').filter(Boolean)[0] || `${owner}.github.io`;
@@ -586,7 +598,7 @@
           .then(r => r.ok ? r.json() : null)
           .then(data => {
             if (data && typeof data.size === 'number') {
-              setGithubLiveSizeKb(data.size); // Taille retournée en Ko par GitHub
+              setGithubLiveSizeKb(data.size);
             }
           })
           .catch(() => {});
@@ -659,15 +671,22 @@
       useEffect(() => {
         let profileRef = null;
         let usersListRef = null;
+        let presenceListRef = null;
+        let logsListRef = null;
 
         const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (user) => {
           if (profileRef) { profileRef.off(); profileRef = null; }
           if (usersListRef) { usersListRef.off(); usersListRef = null; }
+          if (presenceListRef) { presenceListRef.off(); presenceListRef = null; }
+          if (logsListRef) { logsListRef.off(); logsListRef = null; }
 
           if (!user) {
+            loggedSessionUidRef.current = null;
             setAuthUser(null);
             setUserProfile(null);
             setAllUsers([]);
+            setOnlinePresence({});
+            setLoginLogs([]);
             setAuthLoading(false);
             return;
           }
@@ -703,14 +722,31 @@
               const p = snap.val();
               if (p) {
                 setUserProfile({ ...p, uid: user.uid });
-                if (p.role === 'admin' && p.active !== false && !usersListRef) {
-                  usersListRef = mainDb.ref('users');
-                  usersListRef.on('value', (uSnap) => {
-                    const obj = uSnap.val() || {};
-                    const list = Object.entries(obj).map(([uid, val]) => ({ ...val, uid }));
-                    list.sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''));
-                    setAllUsers(list);
-                  });
+                if (p.role === 'admin' && p.active !== false) {
+                  if (!usersListRef) {
+                    usersListRef = mainDb.ref('users');
+                    usersListRef.on('value', (uSnap) => {
+                      const obj = uSnap.val() || {};
+                      const list = Object.entries(obj).map(([uid, val]) => ({ ...val, uid }));
+                      list.sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''));
+                      setAllUsers(list);
+                    });
+                  }
+                  if (!presenceListRef) {
+                    presenceListRef = mainDb.ref('presence');
+                    presenceListRef.on('value', (pSnap) => {
+                      setOnlinePresence(pSnap.val() || {});
+                    });
+                  }
+                  if (!logsListRef) {
+                    logsListRef = mainDb.ref('login_logs').limitToLast(50);
+                    logsListRef.on('value', (lSnap) => {
+                      const obj = lSnap.val() || {};
+                      const list = Object.entries(obj).map(([id, val]) => ({ ...val, id }));
+                      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                      setLoginLogs(list);
+                    });
+                  }
                 }
               } else {
                 setUserProfile({ uid: user.uid, email: user.email || '', name: getFirstName('', user.email), role: 'viewer', active: false });
@@ -730,8 +766,73 @@
           unsubscribeAuth();
           if (profileRef) profileRef.off();
           if (usersListRef) usersListRef.off();
+          if (presenceListRef) presenceListRef.off();
+          if (logsListRef) logsListRef.off();
         };
       }, []);
+
+      // --- PRÉSENCE EN TEMPS RÉEL (.info/connected + onDisconnect) & JOURNAL DES CONNEXIONS ---
+      useEffect(() => {
+        if (!isAuthenticated || !authUser?.uid) return;
+
+        const uid = authUser.uid;
+        const device = detectDeviceLabel();
+        const myPresenceRef = mainDb.ref(`presence/${uid}`);
+        const connectedRef = mainDb.ref('.info/connected');
+
+        const onConnected = (snap) => {
+          if (snap.val() === true) {
+            myPresenceRef.onDisconnect().set({
+              online: false,
+              device,
+              name: currentUserDisplayName,
+              email: authUser.email || '',
+              role: userRole,
+              lastSeen: firebase.database.ServerValue.TIMESTAMP
+            }).catch(() => {});
+
+            myPresenceRef.set({
+              online: true,
+              device,
+              name: currentUserDisplayName,
+              email: authUser.email || '',
+              role: userRole,
+              since: firebase.database.ServerValue.TIMESTAMP,
+              lastSeen: firebase.database.ServerValue.TIMESTAMP
+            }).catch(() => {});
+          }
+        };
+
+        connectedRef.on('value', onConnected);
+
+        // Enregistre une ligne dans le journal des connexions (1 fois par ouverture de session)
+        if (loggedSessionUidRef.current !== uid) {
+          loggedSessionUidRef.current = uid;
+          mainDb.ref('login_logs').push({
+            uid,
+            name: currentUserDisplayName,
+            firstName: currentUserFirstName,
+            email: authUser.email || '',
+            role: userRole,
+            device,
+            timestamp: Date.now()
+          }).catch(() => {});
+        }
+
+        return () => {
+          connectedRef.off('value', onConnected);
+        };
+      }, [isAuthenticated, authUser?.uid, currentUserDisplayName, currentUserFirstName, userRole]);
+
+      const handleClearLoginLogs = async () => {
+        if (!isAdmin) return;
+        try {
+          await mainDb.ref('login_logs').remove();
+          showToast("Historique des connexions vidé.", "success");
+        } catch (err) {
+          showToast("Erreur : " + err.message, "error");
+        }
+      };
 
       const handleEmailLogin = async (e) => {
         e.preventDefault();
@@ -772,6 +873,18 @@
       };
 
       const handleLogout = async () => {
+        if (authUser?.uid) {
+          try {
+            await mainDb.ref(`presence/${authUser.uid}`).set({
+              online: false,
+              device: detectDeviceLabel(),
+              name: currentUserDisplayName,
+              email: authUser.email || '',
+              role: userRole,
+              lastSeen: firebase.database.ServerValue.TIMESTAMP
+            });
+          } catch (_) {}
+        }
         await firebaseAuth.signOut();
         setActiveTab('dashboard');
       };
@@ -2148,6 +2261,11 @@
           setSettingsSubTab('compta');
         }
       }, [isViewer, isAdmin, activeTab, settingsSubTab]);
+
+      const onlineUsersCount = useMemo(() => {
+        return Object.values(onlinePresence).filter(p => p && p.online === true).length;
+      }, [onlinePresence]);
+
       if (authLoading) {
         return (
           <div className="min-h-screen bg-gray-950 flex flex-col">
@@ -3232,6 +3350,11 @@
                             >
                               <Users className="w-4 h-4" />
                               <span>Utilisateurs & Accès ({allUsers.length})</span>
+                              {onlineUsersCount > 0 && (
+                                <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                  ● {onlineUsersCount}
+                                </span>
+                              )}
                             </button>
                             <button
                               onClick={() => setSettingsSubTab('tech')}
@@ -3667,17 +3790,21 @@
                             )}
                           </div>
 
-                          {/* LISTE DES UTILISATEURS AUTORISÉS */}
+                          {/* LISTE DES UTILISATEURS AUTORISÉS + STATUT EN LIGNE EN TEMPS RÉEL */}
                           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 lg:col-span-2">
-                            <div className="flex items-center justify-between mb-4">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
                               <div>
                                 <h2 className="text-lg font-bold text-white flex items-center">
                                   <Shield className="w-5 h-5 mr-2 text-red-400"/> Membres ayant accès à la trésorerie
                                 </h2>
                                 <p className="text-xs text-gray-400 mt-0.5">
-                                  Modifiez un prénom, changez un rôle ou coupez un accès instantanément (verrouillé côté serveur Google).
+                                  Voyant vert en temps réel lorsqu'un membre est connecté • Modifiez un prénom, un rôle ou coupez un accès instantanément.
                                 </p>
                               </div>
+                              <span className="inline-flex items-center space-x-1.5 text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 self-start">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                <span>{onlineUsersCount} connecté{onlineUsersCount > 1 ? 's' : ''} en direct</span>
+                              </span>
                             </div>
 
                             <div className="space-y-3">
@@ -3685,14 +3812,22 @@
                                 const isMe = u.uid === authUser?.uid;
                                 const uRole = ROLE_META[u.role] || ROLE_META.viewer;
                                 const isActive = u.active !== false;
+                                const pres = onlinePresence[u.uid];
+                                const isOnlineNow = pres && pres.online === true;
                                 return (
                                   <div key={u.uid} className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isActive ? 'bg-gray-950 border-gray-800' : 'bg-red-950/20 border-red-500/30 opacity-75'}`}>
                                     <div className="flex items-center space-x-3 min-w-0">
-                                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold flex-shrink-0 ${uRole.avatarClass}`}>
-                                        {getFirstName(u.name, u.email).charAt(0).toUpperCase()}
+                                      <div className="relative flex-shrink-0">
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold ${uRole.avatarClass}`}>
+                                          {getFirstName(u.name, u.email).charAt(0).toUpperCase()}
+                                        </div>
+                                        <span
+                                          title={isOnlineNow ? `En ligne (${pres.device || 'Appareil'})` : 'Hors ligne'}
+                                          className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-gray-950 ${isOnlineNow ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'}`}
+                                        ></span>
                                       </div>
                                       <div className="min-w-0">
-                                        <div className="flex items-center space-x-2">
+                                        <div className="flex flex-wrap items-center gap-1.5">
                                           <input
                                             type="text"
                                             defaultValue={u.name || ''}
@@ -3700,13 +3835,24 @@
                                               const val = e.target.value.trim();
                                               if (val && val !== u.name) handleUpdateUserRecord(u.uid, { name: val });
                                             }}
-                                            className="bg-transparent border-b border-transparent hover:border-gray-600 focus:border-blue-500 text-sm font-bold text-white outline-none max-w-[180px]"
+                                            className="bg-transparent border-b border-transparent hover:border-gray-600 focus:border-blue-500 text-sm font-bold text-white outline-none max-w-[170px]"
                                             title="Cliquez pour modifier le prénom/nom"
                                           />
-                                          {isMe && <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">Vous</span>}
+                                          {isOnlineNow ? (
+                                            <span className="text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
+                                              🟢 En ligne • {pres.device || 'Connecté'}
+                                            </span>
+                                          ) : (
+                                            <span className="text-[10px] bg-gray-800 text-gray-400 border border-gray-700 px-2 py-0.5 rounded-full font-medium">
+                                              {pres?.lastSeen
+                                                ? `Vu le ${new Date(pres.lastSeen).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} à ${new Date(pres.lastSeen).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+                                                : 'Hors ligne'}
+                                            </span>
+                                          )}
+                                          {isMe && <span className="text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full font-bold">Vous</span>}
                                           {!isActive && <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-full font-bold">Bloqué</span>}
                                         </div>
-                                        <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                                        <p className="text-xs text-gray-400 truncate mt-0.5">{u.email}</p>
                                       </div>
                                     </div>
 
@@ -3751,6 +3897,127 @@
                       {/* SOUS-ONGLET 4 : TECHNIQUE (ADMIN UNIQUEMENT) */}
                       {settingsSubTab === 'tech' && isAdmin && (
                         <div className="space-y-6">
+                          {/* MONITEUR EN DIRECT & HISTORIQUE DES CONNEXIONS (ADMIN UNIQUEMENT) */}
+                          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-5">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-4">
+                              <div>
+                                <h2 className="text-lg font-bold text-white flex items-center">
+                                  <Clock className="w-5 h-5 mr-2 text-emerald-400"/> Activité en Direct & Historique des Connexions
+                                </h2>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  Suivi en temps réel des membres connectés et journal des 50 dernières ouvertures de session.
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center space-x-1.5 text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                  <span>{onlineUsersCount} en ligne</span>
+                                </span>
+                                {loginLogs.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={handleClearLoginLogs}
+                                    className="text-xs bg-gray-800 hover:bg-red-600/20 text-gray-300 hover:text-red-300 border border-gray-700 px-3 py-1.5 rounded-xl font-medium transition-colors"
+                                  >
+                                    Vider l'historique
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* MEMBRES ACTUELLEMENT EN LIGNE */}
+                            <div>
+                              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2.5">
+                                Présence en temps réel
+                              </h3>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {allUsers.map(u => {
+                                  const pres = onlinePresence[u.uid];
+                                  const isOnlineNow = pres && pres.online === true;
+                                  const uRole = ROLE_META[u.role] || ROLE_META.viewer;
+                                  return (
+                                    <div key={u.uid} className={`p-3.5 rounded-xl border flex items-center justify-between gap-2 ${isOnlineNow ? 'bg-emerald-950/25 border-emerald-500/40' : 'bg-gray-950 border-gray-800'}`}>
+                                      <div className="flex items-center space-x-2.5 min-w-0">
+                                        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOnlineNow ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'}`}></span>
+                                        <div className="min-w-0">
+                                          <p className="text-xs font-bold text-white truncate">{getFirstName(u.name, u.email)}</p>
+                                          <p className="text-[11px] text-gray-400 truncate">{uRole.label}</p>
+                                        </div>
+                                      </div>
+                                      <div className="text-right flex-shrink-0">
+                                        {isOnlineNow ? (
+                                          <span className="inline-flex items-center space-x-1 text-[11px] font-bold text-emerald-300">
+                                            {pres.device === 'Téléphone' ? <Smartphone className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
+                                            <span>{pres.device || 'En ligne'}</span>
+                                          </span>
+                                        ) : (
+                                          <span className="text-[11px] text-gray-500">
+                                            {pres?.lastSeen
+                                              ? `${new Date(pres.lastSeen).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} ${new Date(pres.lastSeen).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+                                              : 'Hors ligne'}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* TABLEAU DU JOURNAL DES CONNEXIONS */}
+                            <div>
+                              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2.5">
+                                Journal des dernières connexions ({loginLogs.length})
+                              </h3>
+                              {loginLogs.length === 0 ? (
+                                <p className="text-xs text-gray-500 bg-gray-950 border border-gray-800 rounded-xl p-4 text-center">
+                                  Aucune connexion enregistrée pour le moment (la prochaine ouverture de session apparaîtra ici).
+                                </p>
+                              ) : (
+                                <div className="overflow-x-auto max-h-72 overflow-y-auto rounded-xl border border-gray-800">
+                                  <table className="w-full text-xs text-left text-gray-300">
+                                    <thead className="text-[11px] text-gray-400 uppercase bg-gray-950 border-b border-gray-800 sticky top-0">
+                                      <tr>
+                                        <th className="px-3.5 py-2.5">Membre</th>
+                                        <th className="px-3.5 py-2.5">Rôle</th>
+                                        <th className="px-3.5 py-2.5">Appareil</th>
+                                        <th className="px-3.5 py-2.5 text-right">Date & Heure</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {loginLogs.map(log => {
+                                        const lRole = ROLE_META[log.role] || ROLE_META.viewer;
+                                        const dt = log.timestamp ? new Date(log.timestamp) : null;
+                                        return (
+                                          <tr key={log.id} className="bg-gray-950/60 border-b border-gray-800/70 hover:bg-gray-800/40">
+                                            <td className="px-3.5 py-2.5 font-bold text-white">
+                                              {log.firstName || getFirstName(log.name, log.email)}
+                                              <span className="block text-[10px] font-normal text-gray-500">{log.email}</span>
+                                            </td>
+                                            <td className="px-3.5 py-2.5">
+                                              <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${lRole.badgeClass}`}>
+                                                {lRole.short}
+                                              </span>
+                                            </td>
+                                            <td className="px-3.5 py-2.5 text-gray-300">
+                                              <span className="inline-flex items-center space-x-1">
+                                                {log.device === 'Téléphone' ? <Smartphone className="w-3.5 h-3.5 text-blue-400" /> : <Monitor className="w-3.5 h-3.5 text-gray-400" />}
+                                                <span>{log.device || 'Ordinateur'}</span>
+                                              </span>
+                                            </td>
+                                            <td className="px-3.5 py-2.5 text-right text-gray-300 whitespace-nowrap">
+                                              {dt ? `${dt.toLocaleDateString('fr-FR')} à ${dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : '-'}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
                           {/* LIEN DU DOSSIER DRIVE (POUR LE BOUTON DU BANDEAU) */}
                           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
                             <h2 className="text-lg font-bold text-white flex items-center mb-1">
